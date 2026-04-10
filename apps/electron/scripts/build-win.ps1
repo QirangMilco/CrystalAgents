@@ -266,6 +266,14 @@ try {
 # 7. Package with electron-builder
 Write-Host "Packaging app with electron-builder..."
 
+# Generate variant-specific electron-builder config
+Push-Location $RootDir
+try {
+    $VariantBuilderConfig = (bun run apps/electron/scripts/build-variant-config.ts).Trim()
+} finally {
+    Pop-Location
+}
+
 # Debug: Show bun.exe file info
 Write-Host ""
 Write-Host "=== Debug: bun.exe File Info ===" -ForegroundColor Magenta
@@ -363,7 +371,7 @@ while (-not $builderSuccess -and $builderRetry -lt $maxBuilderRetries) {
         Start-Sleep -Seconds 1
     }
 
-    npx electron-builder --win --x64 2>&1 | Tee-Object -Variable builderOutput
+    npx electron-builder --config "$VariantBuilderConfig" --win --x64 2>&1 | Tee-Object -Variable builderOutput
 
     if ($LASTEXITCODE -eq 0) {
         $builderSuccess = $true

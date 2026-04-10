@@ -1,0 +1,24 @@
+{
+  "appId": "com.qirang.crystal-agent",
+  "productName": "Crystal Agents",
+  "bundleDisplayName": "Crystal Agents",
+  "artifactNamePrefix": "Crystal-Agents",
+  "dmgTitle": "Crystal Agents",
+  "configDirName": ".crystal-agent",
+  "workspaceDataDirName": ".crystal-agent",
+  "import": {
+    "sourceConfigDirName": ".craft-agent",
+    "copyOnFirstLaunch": true,
+    "workspaceDetection": true,
+    "include": [
+      "config.json",
+      "preferences.json",
+      "credentials.enc",
+      "workspaces",
+      "theme.json",
+      "themes",
+      "permissions",
+      "tool-icons"
+    ]
+  }
+}

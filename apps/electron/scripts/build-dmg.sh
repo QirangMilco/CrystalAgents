@@ -41,16 +41,20 @@ ARCH="arm64"
 UPLOAD=false
 UPLOAD_LATEST=false
 UPLOAD_SCRIPT=false
+SIGN=true
+PROXY_URL="${CRAFT_BUILD_PROXY_URL:-}"
 
 show_help() {
     cat << EOF
-Usage: build-dmg.sh [arm64|x64] [--upload] [--latest] [--script]
+Usage: build-dmg.sh [arm64|x64] [--upload] [--latest] [--script] [--no-sign] [--proxy-url <url>]
 
 Arguments:
   arm64|x64    Target architecture (default: arm64)
   --upload     Upload DMG to S3 after building
   --latest     Also update electron/latest (requires --upload)
   --script     Also upload install-app.sh (requires --upload)
+  --no-sign    Skip code signing (for local test builds)
+  --proxy-url  Use HTTP/HTTPS proxy for downloads (default: direct)
 
 Environment variables (from .env or environment):
   APPLE_SIGNING_IDENTITY    - Code signing identity
@@ -58,6 +62,7 @@ Environment variables (from .env or environment):
   APPLE_TEAM_ID             - Apple Team ID
   APPLE_APP_SPECIFIC_PASSWORD - App-specific password
   S3_VERSIONS_BUCKET_*      - S3 credentials (for --upload)
+  CRAFT_BUILD_PROXY_URL     - Default proxy URL for build/downloads
 EOF
     exit 0
 }
@@ -68,6 +73,15 @@ while [[ $# -gt 0 ]]; do
         --upload)      UPLOAD=true; shift ;;
         --latest)      UPLOAD_LATEST=true; shift ;;
         --script)      UPLOAD_SCRIPT=true; shift ;;
+        --no-sign)     SIGN=false; shift ;;
+        --proxy-url)
+            if [ -z "${2:-}" ]; then
+                echo "ERROR: --proxy-url requires a value"
+                exit 1
+            fi
+            PROXY_URL="$2"
+            shift 2
+            ;;
         -h|--help)     show_help ;;
         *)
             echo "Unknown option: $1"
@@ -79,6 +93,19 @@ done
 
 # Configuration
 BUN_VERSION="bun-v1.3.9"  # Pinned version for reproducible builds
+BUN_VENDOR_DIR="$ELECTRON_DIR/vendor/bun"
+BUN_VENDOR_BIN="$BUN_VENDOR_DIR/bun"
+BUN_VENDOR_VERSION_FILE="$BUN_VENDOR_DIR/.version"
+
+if [ -n "$PROXY_URL" ]; then
+    export HTTP_PROXY="$PROXY_URL"
+    export HTTPS_PROXY="$PROXY_URL"
+    export ALL_PROXY="$PROXY_URL"
+    export http_proxy="$PROXY_URL"
+    export https_proxy="$PROXY_URL"
+    export all_proxy="$PROXY_URL"
+    echo "Using build proxy: $PROXY_URL"
+fi
 
 echo "=== Building Craft Agents DMG (${ARCH}) using electron-builder ==="
 if [ "$UPLOAD" = true ]; then
@@ -87,7 +114,7 @@ fi
 
 # 1. Clean previous build artifacts
 echo "Cleaning previous builds..."
-rm -rf "$ELECTRON_DIR/vendor"
+# Keep vendor/bun cache to avoid re-downloading identical Bun version every build.
 rm -rf "$ELECTRON_DIR/node_modules/@anthropic-ai"
 rm -rf "$ELECTRON_DIR/packages"
 rm -rf "$ELECTRON_DIR/release"
@@ -97,31 +124,54 @@ echo "Installing dependencies..."
 cd "$ROOT_DIR"
 bun install
 
-# 3. Download Bun binary with checksum verification
-echo "Downloading Bun ${BUN_VERSION} for darwin-${ARCH}..."
-mkdir -p "$ELECTRON_DIR/vendor/bun"
+# 3. Build subprocess servers required by packaged app
+# (session-mcp-server / pi-agent-server are spawned at runtime)
+echo "Building subprocess servers..."
+cd "$ROOT_DIR"
+bun run server:build:subprocess
+
+# Stage subprocess servers into electron resources for packaging
+mkdir -p "$ELECTRON_DIR/resources/session-mcp-server" "$ELECTRON_DIR/resources/pi-agent-server"
+cp "$ROOT_DIR/packages/session-mcp-server/dist/index.js" "$ELECTRON_DIR/resources/session-mcp-server/index.js"
+cp "$ROOT_DIR/packages/pi-agent-server/dist/index.js" "$ELECTRON_DIR/resources/pi-agent-server/index.js"
+
+# 4. Ensure pinned Bun binary (with local cache)
 BUN_DOWNLOAD="bun-darwin-$([ "$ARCH" = "arm64" ] && echo "aarch64" || echo "x64")"
+EXPECTED_BUN_MARKER="${BUN_VERSION}:${BUN_DOWNLOAD}"
 
-# Create temp directory to avoid race conditions
-TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
+if [ -x "$BUN_VENDOR_BIN" ] && [ -f "$BUN_VENDOR_VERSION_FILE" ] && [ "$(cat "$BUN_VENDOR_VERSION_FILE")" = "$EXPECTED_BUN_MARKER" ]; then
+    echo "Using cached Bun ${EXPECTED_BUN_MARKER}"
+else
+    echo "Downloading Bun ${BUN_VERSION} for darwin-${ARCH}..."
+    mkdir -p "$BUN_VENDOR_DIR"
 
-# Download binary and checksums
-curl -fSL "https://github.com/oven-sh/bun/releases/download/${BUN_VERSION}/${BUN_DOWNLOAD}.zip" -o "$TEMP_DIR/${BUN_DOWNLOAD}.zip"
-curl -fSL "https://github.com/oven-sh/bun/releases/download/${BUN_VERSION}/SHASUMS256.txt" -o "$TEMP_DIR/SHASUMS256.txt"
+    # Create temp directory to avoid race conditions
+    TEMP_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_DIR" EXIT
 
-# Verify checksum
-echo "Verifying checksum..."
-cd "$TEMP_DIR"
-grep "${BUN_DOWNLOAD}.zip" SHASUMS256.txt | shasum -a 256 -c -
-cd - > /dev/null
+    # Download binary and checksums
+    CURL_PROXY_ARGS=()
+    if [ -n "$PROXY_URL" ]; then
+        CURL_PROXY_ARGS=(--proxy "$PROXY_URL")
+    fi
 
-# Extract and install
-unzip -o "$TEMP_DIR/${BUN_DOWNLOAD}.zip" -d "$TEMP_DIR"
-cp "$TEMP_DIR/${BUN_DOWNLOAD}/bun" "$ELECTRON_DIR/vendor/bun/"
-chmod +x "$ELECTRON_DIR/vendor/bun/bun"
+    curl -fSL "${CURL_PROXY_ARGS[@]}" "https://github.com/oven-sh/bun/releases/download/${BUN_VERSION}/${BUN_DOWNLOAD}.zip" -o "$TEMP_DIR/${BUN_DOWNLOAD}.zip"
+    curl -fSL "${CURL_PROXY_ARGS[@]}" "https://github.com/oven-sh/bun/releases/download/${BUN_VERSION}/SHASUMS256.txt" -o "$TEMP_DIR/SHASUMS256.txt"
 
-# 4. Copy SDK from root node_modules (monorepo hoisting)
+    # Verify checksum
+    echo "Verifying checksum..."
+    cd "$TEMP_DIR"
+    grep "${BUN_DOWNLOAD}.zip" SHASUMS256.txt | shasum -a 256 -c -
+    cd - > /dev/null
+
+    # Extract and install
+    unzip -o "$TEMP_DIR/${BUN_DOWNLOAD}.zip" -d "$TEMP_DIR"
+    cp "$TEMP_DIR/${BUN_DOWNLOAD}/bun" "$BUN_VENDOR_BIN"
+    chmod +x "$BUN_VENDOR_BIN"
+    printf "%s" "$EXPECTED_BUN_MARKER" > "$BUN_VENDOR_VERSION_FILE"
+fi
+
+# 5. Copy SDK from root node_modules (monorepo hoisting)
 # Note: The SDK is hoisted to root node_modules by the package manager.
 # We copy it here because electron-builder only sees apps/electron/.
 SDK_SOURCE="$ROOT_DIR/node_modules/@anthropic-ai/claude-agent-sdk"
@@ -130,7 +180,7 @@ echo "Copying SDK..."
 mkdir -p "$ELECTRON_DIR/node_modules/@anthropic-ai"
 cp -r "$SDK_SOURCE" "$ELECTRON_DIR/node_modules/@anthropic-ai/"
 
-# 5. Copy interceptor
+# 6. Copy interceptor
 INTERCEPTOR_SOURCE="$ROOT_DIR/packages/shared/src/unified-network-interceptor.ts"
 require_path "$INTERCEPTOR_SOURCE" "Interceptor" "Ensure packages/shared/src/unified-network-interceptor.ts exists."
 echo "Copying interceptor..."
@@ -143,23 +193,31 @@ for dep in interceptor-common.ts feature-flags.ts interceptor-request-utils.ts; 
   fi
 done
 
-# 6. Build Electron app
+# 7. Build Electron app
 echo "Building Electron app..."
 cd "$ROOT_DIR"
 bun run electron:build
 
-# 7. Package with electron-builder
+# 8. Package with electron-builder
 echo "Packaging app with electron-builder..."
+cd "$ROOT_DIR"
+VARIANT_BUILDER_CONFIG=$(bun run apps/electron/scripts/build-variant-config.ts)
 cd "$ELECTRON_DIR"
 
 # Set up environment for electron-builder
-export CSC_IDENTITY_AUTO_DISCOVERY=true
+if [ "$SIGN" = true ]; then
+    export CSC_IDENTITY_AUTO_DISCOVERY=true
+else
+    export CSC_IDENTITY_AUTO_DISCOVERY=false
+    unset CSC_NAME
+    echo "Code signing disabled (--no-sign)"
+fi
 
 # Build electron-builder arguments
 BUILDER_ARGS="--mac --${ARCH}"
 
 # Add code signing if identity is available
-if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+if [ "$SIGN" = true ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
     # Strip "Developer ID Application: " prefix if present (electron-builder adds it automatically)
     CSC_NAME_CLEAN="${APPLE_SIGNING_IDENTITY#Developer ID Application: }"
     echo "Using signing identity: $CSC_NAME_CLEAN"
@@ -167,7 +225,7 @@ if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
 fi
 
 # Add notarization if all credentials are available
-if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+if [ "$SIGN" = true ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
     echo "Notarization enabled"
     export APPLE_ID="$APPLE_ID"
     export APPLE_TEAM_ID="$APPLE_TEAM_ID"
@@ -180,26 +238,26 @@ if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PA
 fi
 
 # Run electron-builder
-npx electron-builder $BUILDER_ARGS
+npx electron-builder --config "$VARIANT_BUILDER_CONFIG" $BUILDER_ARGS
 
-# 8. Verify the DMG was built
-# electron-builder.yml uses artifactName to output: Craft-Agents-${arch}.dmg
-DMG_NAME="Craft-Agents-${ARCH}.dmg"
-DMG_PATH="$ELECTRON_DIR/release/$DMG_NAME"
+# 9. Verify the DMG was built
+DMG_PATH=$(find "$ELECTRON_DIR/release" -maxdepth 1 -name "*.dmg" -type f | head -n 1)
 
-if [ ! -f "$DMG_PATH" ]; then
-    echo "ERROR: Expected DMG not found at $DMG_PATH"
+if [ -z "$DMG_PATH" ] || [ ! -f "$DMG_PATH" ]; then
+    echo "ERROR: No DMG artifact found in $ELECTRON_DIR/release"
     echo "Contents of release directory:"
     ls -la "$ELECTRON_DIR/release/"
     exit 1
 fi
 
+DMG_NAME=$(basename "$DMG_PATH")
+
 echo ""
 echo "=== Build Complete ==="
-echo "DMG: $ELECTRON_DIR/release/${DMG_NAME}"
-echo "Size: $(du -h "$ELECTRON_DIR/release/${DMG_NAME}" | cut -f1)"
+echo "DMG: $DMG_PATH"
+echo "Size: $(du -h "$DMG_PATH" | cut -f1)"
 
-# 9. Create manifest.json for upload script
+# 10. Create manifest.json for upload script
 # Read version from package.json
 ELECTRON_VERSION=$(cat "$ELECTRON_DIR/package.json" | grep '"version"' | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 echo "Creating manifest.json (version: $ELECTRON_VERSION)..."

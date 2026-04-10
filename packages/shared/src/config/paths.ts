@@ -13,7 +13,9 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
+import { getAppVariant } from './app-variant.ts';
 
 // Allow override via environment variable for multi-instance dev
-// Falls back to default ~/.craft-agent/ for production and non-numbered dev folders
-export const CONFIG_DIR = process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent');
+// Falls back to app-variant config dir, then ~/.craft-agent/ for compatibility
+const variant = getAppVariant();
+export const CONFIG_DIR = process.env.CRAFT_CONFIG_DIR || join(homedir(), variant.configDirName || '.craft-agent');

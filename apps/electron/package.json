@@ -30,6 +30,7 @@
     "dev": "vite dev",
     "typecheck": "tsc --noEmit",
     "dist:mac": "bash scripts/build-dmg.sh arm64",
+    "dist:mac:no-sign": "bash scripts/build-dmg.sh arm64 --no-sign",
     "dist:mac:x64": "bash scripts/build-dmg.sh x64",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1",
     "lint": "eslint src/",

@@ -68,7 +68,7 @@ const machineId = createHash('sha256').update(hostname() + homedir()).digest('he
 Sentry.setUser({ id: machineId })
 
 import { join, delimiter } from 'path'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, cpSync, mkdirSync, readdirSync } from 'fs'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
 import { registerAllRpcHandlers } from './handlers/index'
@@ -82,8 +82,8 @@ import { setSearchPlatform, setImageProcessor } from '@craft-agent/server-core/s
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
 import { loadWindowState, saveWindowState } from './window-state'
-import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig } from '@craft-agent/shared/config'
-import { getDefaultWorkspacesDir } from '@craft-agent/shared/workspaces'
+import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR, getAppVariant } from '@craft-agent/shared/config'
+import { getDefaultWorkspacesDir, WORKSPACE_DATA_DIR } from '@craft-agent/shared/workspaces'
 import { initializeDocs } from '@craft-agent/shared/docs'
 import { initializeReleaseNotes } from '@craft-agent/shared/release-notes'
 import { ensureDefaultPermissions } from '@craft-agent/shared/agent/permissions-config'
@@ -196,7 +196,9 @@ let pendingDeepLink: string | null = null
 
 // Set app name early (before app.whenReady) to ensure correct macOS menu bar title
 // Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Craft Agents [1]")
-app.setName(process.env.CRAFT_APP_NAME || 'Craft Agents')
+const variant = getAppVariant()
+const DEFAULT_APP_NAME = process.env.CRAFT_APP_NAME || variant.bundleDisplayName || 'Craft Agents'
+app.setName(DEFAULT_APP_NAME)
 
 // Register as default protocol client for craftagents:// URLs
 // This must be done before app.whenReady() on some platforms
@@ -296,6 +298,40 @@ if (!gotTheLock) {
   })
 }
 
+function importOfficialConfigOnFirstLaunch(): void {
+  const variantConfig = getAppVariant()
+  if (!variantConfig.import.copyOnFirstLaunch) return
+
+  const sourceDirName = variantConfig.import.sourceConfigDirName || '.craft-agent'
+  const sourceConfigDir = join(homedir(), sourceDirName)
+  const targetConfigDir = CONFIG_DIR
+
+  if (sourceConfigDir === targetConfigDir) return
+  if (!existsSync(sourceConfigDir)) return
+
+  if (!existsSync(targetConfigDir)) {
+    mkdirSync(targetConfigDir, { recursive: true })
+  }
+
+  const targetEntries = readdirSync(targetConfigDir)
+  if (targetEntries.length > 0) return
+
+  const includeEntries = variantConfig.import.include
+  for (const entry of includeEntries) {
+    const sourcePath = join(sourceConfigDir, entry)
+    const targetPath = join(targetConfigDir, entry)
+
+    if (!existsSync(sourcePath) || existsSync(targetPath)) continue
+
+    try {
+      cpSync(sourcePath, targetPath, { recursive: true, force: false, errorOnExist: false })
+      mainLog.info('[VariantImport] Imported entry from official config:', entry)
+    } catch (error) {
+      mainLog.warn('[VariantImport] Failed to import entry:', { entry, error })
+    }
+  }
+}
+
 // Helper to create initial windows on startup
 async function createInitialWindows(): Promise<void> {
   if (!windowManager) return
@@ -353,9 +389,23 @@ app.whenReady().then(async () => {
   // Export packaged state as env var so logger.ts (and headless Bun) don't need 'electron'
   process.env.CRAFT_IS_PACKAGED = app.isPackaged ? 'true' : 'false'
 
+  const startupVariant = getAppVariant()
+  mainLog.info('[Variant] Startup resolved variant:', {
+    configDirName: startupVariant.configDirName,
+    workspaceDataDirName: startupVariant.workspaceDataDirName,
+    sourceConfigDirName: startupVariant.import.sourceConfigDirName,
+    copyOnFirstLaunch: startupVariant.import.copyOnFirstLaunch,
+    configDir: CONFIG_DIR,
+    workspaceDataDir: WORKSPACE_DATA_DIR,
+  })
+
   // Register bundled assets root so all seeding functions can find their files
   // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
   setBundledAssetsRoot(__dirname)
+
+  // Optional one-time import from official ~/.craft-agent to variant CONFIG_DIR.
+  // Runs before docs/themes/permissions seeding so imported user data remains primary.
+  importOfficialConfigOnFirstLaunch()
 
   // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
   initializeBackendHostRuntime({

@@ -5,6 +5,7 @@ import { existsSync } from 'fs'
 import { release } from 'os'
 import { RPC_CHANNELS, type WindowCloseRequestSource } from '../shared/types'
 import type { SavedWindow } from './window-state'
+import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 
 // Vite dev server URL for hot reload
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
@@ -75,6 +76,15 @@ export class WindowManager {
   /** Return current RPC event sink, if transport has been initialized. */
   getRpcEventSink(): ((channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void) | null {
     return this.eventSink
+  }
+
+  private getWindowTitle(workspaceId: string): string {
+    return getWorkspaceByNameOrId(workspaceId)?.name?.trim() || ''
+  }
+
+  private updateWindowTitle(window: BrowserWindow, workspaceId: string | null): void {
+    if (window.isDestroyed()) return
+    window.setTitle(workspaceId ? this.getWindowTitle(workspaceId) : '')
   }
 
   /** Resolve a window's current clientId from transport handshake state. */
@@ -173,6 +183,7 @@ export class WindowManager {
 
     // Show window when first paint is ready (faster perceived startup)
     window.once('ready-to-show', () => {
+      this.updateWindowTitle(window, this.getWorkspaceForWindow(window.webContents.id))
       window.show()
     })
 
@@ -180,6 +191,20 @@ export class WindowManager {
     window.webContents.setWindowOpenHandler((details) => {
       shell.openExternal(details.url)
       return { action: 'deny' }
+    })
+
+    window.webContents.on('page-title-updated', (event, title) => {
+      event.preventDefault()
+      const normalizedTitle = title.trim()
+      if (normalizedTitle) {
+        window.setTitle(normalizedTitle)
+        return
+      }
+      this.updateWindowTitle(window, this.getWorkspaceForWindow(window.webContents.id))
+    })
+
+    window.webContents.on('did-finish-load', () => {
+      this.updateWindowTitle(window, this.getWorkspaceForWindow(window.webContents.id))
     })
 
     // Handle external navigation attempts from renderer WebContents
@@ -216,6 +241,8 @@ export class WindowManager {
     if (focused) {
       this.focusedModeWindows.add(webContentsId)
     }
+
+    this.updateWindowTitle(window, workspaceId)
 
     // Load the renderer - use restoreUrl if provided, otherwise build from options
     if (restoreUrl) {
@@ -525,6 +552,7 @@ export class WindowManager {
     if (managed) {
       const oldWorkspaceId = managed.workspaceId
       managed.workspaceId = workspaceId
+      this.updateWindowTitle(managed.window, workspaceId)
       windowLog.info(`Updated window ${webContentsId} from workspace ${oldWorkspaceId} to ${workspaceId}`)
       return true
     }
@@ -542,6 +570,7 @@ export class WindowManager {
   registerWindow(window: BrowserWindow, workspaceId: string): void {
     const webContentsId = window.webContents.id
     this.windows.set(webContentsId, { window, workspaceId })
+    this.updateWindowTitle(window, workspaceId)
     windowLog.info(`Registered window ${webContentsId} for workspace ${workspaceId}`)
   }
 

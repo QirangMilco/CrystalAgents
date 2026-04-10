@@ -1318,6 +1318,28 @@ function AppShellContent({
     return workspaceSessionMetas.filter(s => !s.isArchived)
   }, [workspaceSessionMetas])
 
+  const activeSessionMeta = useMemo(() => {
+    if (!effectiveSessionId) return null
+    return sessionMetaMap.get(effectiveSessionId) ?? null
+  }, [effectiveSessionId, sessionMetaMap])
+
+  React.useEffect(() => {
+    const sessionTitle = activeSessionMeta ? getSessionTitle(activeSessionMeta).trim() : ''
+    const workspaceTitle = activeWorkspace?.name?.trim() || ''
+
+    if (sessionTitle && workspaceTitle) {
+      document.title = `${sessionTitle} — ${workspaceTitle}`
+      return
+    }
+
+    if (sessionTitle) {
+      document.title = sessionTitle
+      return
+    }
+
+    document.title = workspaceTitle
+  }, [activeSessionMeta, activeWorkspace?.name])
+
   const refreshWorkspaceUnreadMap = useCallback(async () => {
     try {
       const summary = await window.electronAPI.getUnreadSummary()

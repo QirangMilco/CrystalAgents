@@ -17,7 +17,6 @@ import {
   renameSync,
 } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
@@ -25,6 +24,8 @@ import { getWorkspaceDataPath } from './data-path.ts';
 import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from '../statuses/storage.ts';
 import { getDefaultLabelConfig, saveLabelConfig } from '../labels/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
+import { CONFIG_DIR } from '../config/paths.ts';
+import { getAppVariant } from '../config/app-variant.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
 import { normalizeThinkingLevel } from '../agent/thinking-levels.ts';
 import type {
@@ -34,7 +35,6 @@ import type {
   WorkspaceSummary,
 } from './types.ts';
 
-const CONFIG_DIR = join(homedir(), '.craft-agent');
 const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
 
 // ============================================================
@@ -530,6 +530,8 @@ export function ensurePluginManifest(rootPath: string, workspaceName: string): v
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 }
 
+const OFFICIAL_WORKSPACE_DATA_DIR = getAppVariant().import.sourceConfigDirName || '.craft-agent';
+
 const LEGACY_WORKSPACE_DATA_DIRS = [
   'sources',
   'sessions',
@@ -559,9 +561,50 @@ function buildBackupName(name: string): string {
 }
 
 /**
+ * 检测是否为官方 Craft Agents 管理过的工作区：
+ * 1) 显式标记：存在 .craft-agent
+ * 2) 隐式结构：存在 legacy 目录/文件（sessions/skills/sources/...）
+ */
+function isOfficialManagedWorkspace(rootPath: string): boolean {
+  const explicitDir = join(rootPath, OFFICIAL_WORKSPACE_DATA_DIR);
+  if (existsSync(explicitDir) && statSync(explicitDir).isDirectory()) {
+    return true;
+  }
+
+  for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
+    const p = join(rootPath, dirName);
+    if (existsSync(p) && statSync(p).isDirectory()) {
+      return true;
+    }
+  }
+
+  for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
+    const p = join(rootPath, fileName);
+    if (existsSync(p) && statSync(p).isFile()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function moveEntryWithBackup(sourcePath: string, targetPath: string, backupBaseDir: string, backupName: string): void {
+  if (!existsSync(sourcePath)) return;
+
+  if (!existsSync(targetPath)) {
+    renameSync(sourcePath, targetPath);
+    return;
+  }
+
+  const backupPath = join(backupBaseDir, buildBackupName(backupName));
+  renameSync(sourcePath, backupPath);
+}
+
+/**
  * 迁移历史工作区数据：
- * - root/{sessions,skills,sources,labels,statuses} -> root/.craft-agents/*
- * - root/{permissions.json,views.json,automations*.jsonl,events.jsonl} -> root/.craft-agents/*
+ * - root/.craft-agent/* -> root/<WORKSPACE_DATA_DIR>/*
+ * - root/{sessions,skills,sources,labels,statuses} -> root/<WORKSPACE_DATA_DIR>/*
+ * - root/{permissions.json,views.json,automations*.jsonl,events.jsonl} -> root/<WORKSPACE_DATA_DIR>/*
  *
  * 冲突策略：新目录优先；旧目录/文件重命名为 *.legacy-backup-{timestamp}
  */
@@ -569,34 +612,41 @@ export function migrateLegacyWorkspaceData(rootPath: string): void {
   const dataDir = getWorkspaceDataPath(rootPath);
   mkdirSync(dataDir, { recursive: true });
 
+  const officialDataDir = join(rootPath, OFFICIAL_WORKSPACE_DATA_DIR);
+
+  // 情况 A：存在 .craft-agent，先迁移其内部内容到目标目录
+  if (existsSync(officialDataDir) && statSync(officialDataDir).isDirectory()) {
+    for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
+      const sourcePath = join(officialDataDir, dirName);
+      const targetPath = join(dataDir, dirName);
+      moveEntryWithBackup(sourcePath, targetPath, officialDataDir, dirName);
+    }
+
+    for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
+      const sourcePath = join(officialDataDir, fileName);
+      const targetPath = join(dataDir, fileName);
+      moveEntryWithBackup(sourcePath, targetPath, officialDataDir, fileName);
+    }
+
+    // 若 .craft-agent 迁移后已为空，则保留目录不删除（避免破坏用户预期）
+  }
+
+  // 情况 B：根目录 legacy 结构（官方历史管理痕迹）
   for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
     const legacyPath = join(rootPath, dirName);
     const targetPath = join(dataDir, dirName);
-
-    if (!existsSync(legacyPath) || !statSync(legacyPath).isDirectory()) continue;
-
-    if (!existsSync(targetPath)) {
-      renameSync(legacyPath, targetPath);
-      continue;
-    }
-
-    const backupPath = join(rootPath, buildBackupName(dirName));
-    renameSync(legacyPath, backupPath);
+    moveEntryWithBackup(legacyPath, targetPath, rootPath, dirName);
   }
 
   for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
     const legacyPath = join(rootPath, fileName);
     const targetPath = join(dataDir, fileName);
+    moveEntryWithBackup(legacyPath, targetPath, rootPath, fileName);
+  }
 
-    if (!existsSync(legacyPath) || !statSync(legacyPath).isFile()) continue;
-
-    if (!existsSync(targetPath)) {
-      renameSync(legacyPath, targetPath);
-      continue;
-    }
-
-    const backupPath = join(rootPath, buildBackupName(fileName));
-    renameSync(legacyPath, backupPath);
+  // 若工作区检测到官方管理痕迹但目标目录尚无内容，确保目录已创建
+  if (isOfficialManagedWorkspace(rootPath) && !existsSync(dataDir)) {
+    mkdirSync(dataDir, { recursive: true });
   }
 }
 
