@@ -14,6 +14,7 @@ import type { ViewConfig } from './types.ts';
 import { getDefaultViews } from './defaults.ts';
 import { debug } from '../utils/debug.ts';
 import { readJsonFileSync } from '../utils/files.ts';
+import { getWorkspaceDataPath } from '../workspaces/data-path.ts';
 
 const VIEWS_FILE = 'views.json';
 
@@ -33,7 +34,7 @@ export interface ViewsConfig {
  * Also handles migration from old labels/config.json smartLabels key.
  */
 export function loadViewsConfig(workspaceRootPath: string): ViewsConfig {
-  const configPath = join(workspaceRootPath, VIEWS_FILE);
+  const configPath = join(getWorkspaceDataPath(workspaceRootPath), VIEWS_FILE);
 
   // If no views.json exists, check for legacy smartLabels in labels/config.json
   // and migrate them. Otherwise seed with defaults.
@@ -67,7 +68,7 @@ export function saveViewsConfig(
   workspaceRootPath: string,
   config: ViewsConfig
 ): void {
-  const configPath = join(workspaceRootPath, VIEWS_FILE);
+  const configPath = join(getWorkspaceDataPath(workspaceRootPath), VIEWS_FILE);
 
   try {
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
@@ -105,7 +106,7 @@ export function saveViews(
  * Returns the migrated config if migration occurred, null otherwise.
  */
 function migrateFromSmartLabels(workspaceRootPath: string): ViewsConfig | null {
-  const labelsConfigPath = join(workspaceRootPath, 'labels', 'config.json');
+  const labelsConfigPath = join(getWorkspaceDataPath(workspaceRootPath), 'labels', 'config.json');
   if (!existsSync(labelsConfigPath)) return null;
 
   try {

@@ -33,6 +33,8 @@ import {
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeveloperFeedbackEnabled } from '@craft-agent/shared/feature-flags';
+import { CONFIG_DIR } from '@craft-agent/shared/config';
+import { getWorkspaceSourcesPath, getWorkspaceSkillsPath, getWorkspaceSessionsPath } from '@craft-agent/shared/workspaces';
 // Import from session-tools-core
 import {
   type SessionToolContext,
@@ -93,7 +95,7 @@ interface CredentialCacheEntry {
  * The main process writes decrypted credentials to these files.
  */
 function getCredentialCachePath(workspaceRootPath: string, sourceSlug: string): string {
-  return join(workspaceRootPath, 'sources', sourceSlug, '.credential-cache.json');
+  return join(getWorkspaceSourcesPath(workspaceRootPath), sourceSlug, '.credential-cache.json');
 }
 
 /**
@@ -193,15 +195,15 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
   const credentialManager = createCredentialManager(workspaceRootPath);
 
   // Session paths for transform_data / render_template
-  const sessionsDir = join(workspaceRootPath, 'sessions', sessionId);
+  const sessionsDir = join(getWorkspaceSessionsPath(workspaceRootPath), sessionId);
   const sessionDataDir = join(sessionsDir, 'data');
 
   // Build context
   return {
     sessionId,
     workspacePath: workspaceRootPath,
-    get sourcesPath() { return join(workspaceRootPath, 'sources'); },
-    get skillsPath() { return join(workspaceRootPath, 'skills'); },
+    get sourcesPath() { return getWorkspaceSourcesPath(workspaceRootPath); },
+    get skillsPath() { return getWorkspaceSkillsPath(workspaceRootPath); },
     plansFolderPath,
     sessionPath: sessionsDir,
     dataPath: sessionDataDir,
@@ -216,11 +218,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
 
     // Preferences: write directly to preferences.json
     updatePreferences: (updates: Record<string, unknown>) => {
-      // Resolve preferences path from config dir (parent of workspaces dir)
-      // workspaceRootPath = ~/.craft-agent/workspaces/{id}
-      // preferencesPath = ~/.craft-agent/preferences.json
-      const configDir = join(workspaceRootPath, '..', '..');
-      const prefsPath = join(configDir, 'preferences.json');
+      const prefsPath = join(CONFIG_DIR, 'preferences.json');
       try {
         let current: Record<string, unknown> = {};
         if (existsSync(prefsPath)) {
@@ -242,8 +240,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
 
     // Developer feedback: write one JSON file per entry to {configDir}/feedback/
     submitFeedback: (feedback) => {
-      const configDir = process.env.CRAFT_CONFIG_DIR || join(workspaceRootPath, '..', '..');
-      const feedbackDir = join(configDir, 'feedback');
+      const feedbackDir = join(CONFIG_DIR, 'feedback');
       mkdirSync(feedbackDir, { recursive: true });
       const filePath = join(feedbackDir, `${feedback.id}.json`);
       writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');

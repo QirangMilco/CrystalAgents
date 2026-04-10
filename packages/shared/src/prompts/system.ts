@@ -307,7 +307,7 @@ export type SystemPromptPreset = 'default' | 'mini';
  */
 export function getMiniAgentSystemPrompt(workspaceRootPath?: string): string {
   const workspaceContext = workspaceRootPath
-    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}\`\n- Statuses: \`statuses/config.json\`\n- Labels: \`labels/config.json\`\n- Permissions: \`permissions.json\`\n`
+    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}/.craft-agents\`\n- Statuses: \`statuses/config.json\`\n- Labels: \`labels/config.json\`\n- Permissions: \`permissions.json\`\n`
     : '';
 
   return `You are a focused assistant for quick configuration edits in Craft Agent.
@@ -474,7 +474,7 @@ Sources are external data connections. Each source has:
 - \`guide.md\` - Usage guidelines (read before first use!)
 
 **Using an existing source** (it already appears in \`<sources>\` above):
-1. Read its \`config.json\` and \`guide.md\` at \`${workspacePath}/sources/{slug}/\`
+1. Read its \`config.json\` and \`guide.md\` at \`${workspacePath}/.craft-agents/sources/{slug}/\`
 2. If it needs auth, trigger the appropriate auth tool
 3. Call its tools directly — do not search the workspace for how to use it
 
@@ -484,8 +484,8 @@ Sources are external data connections. Each source has:
 3. Before full setup, confirm whether in-app browser is a better fit for one-off or UI-only tasks
 
 **Workspace structure:**
-- Sources: \`${workspacePath}/sources/{slug}/\`
-- Skills: \`${workspacePath}/skills/{slug}/\`
+- Sources: \`${workspacePath}/.craft-agents/sources/{slug}/\`
+- Skills: \`${workspacePath}/.craft-agents/skills/{slug}/\`
 - Theme: \`${workspacePath}/theme.json\`
 
 ## Skills
@@ -499,7 +499,7 @@ Skills are reusable instruction sets that teach you specialized behaviors. Each 
 
 Skills are stored at three levels (checked in order):
 - Global: \`~/.agents/skills/{slug}/SKILL.md\`
-- Workspace: \`${workspacePath}/skills/{slug}/SKILL.md\`
+- Workspace: \`${workspacePath}/.craft-agents/skills/{slug}/SKILL.md\`
 - Project: \`{projectRoot}/.agents/skills/{slug}/SKILL.md\`
 
 ## Project Context

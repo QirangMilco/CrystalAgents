@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+type FetchLike = typeof fetch;
 import { ResponsesApiSearchProvider } from './openai.ts';
 
 const originalFetch = globalThis.fetch;
@@ -13,7 +16,7 @@ describe('ResponsesApiSearchProvider', () => {
     let calledBody: any = null;
     let calledHeaders: Record<string, string> = {};
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (input: FetchInput, init?: FetchInit) => {
       calledUrl = typeof input === 'string' ? input : input.toString();
       calledBody = init?.body ? JSON.parse(String(init.body)) : null;
       const h = init?.headers as Record<string, string> | undefined;
@@ -40,7 +43,7 @@ describe('ResponsesApiSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ResponsesApiSearchProvider({
       apiBase: 'https://api.openai.com/v1',
@@ -62,7 +65,7 @@ describe('ResponsesApiSearchProvider', () => {
     let calledUrl = '';
     let calledBody: any = null;
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (input: FetchInput, init?: FetchInit) => {
       calledUrl = typeof input === 'string' ? input : input.toString();
       calledBody = init?.body ? JSON.parse(String(init.body)) : null;
 
@@ -85,7 +88,7 @@ describe('ResponsesApiSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ResponsesApiSearchProvider({
       apiBase: 'https://openrouter.ai/api/v1',
@@ -125,7 +128,7 @@ describe('ResponsesApiSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ResponsesApiSearchProvider({
       apiBase: 'https://api.openai.com/v1',
@@ -150,7 +153,7 @@ describe('ResponsesApiSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ResponsesApiSearchProvider({
       apiBase: 'https://api.openai.com/v1',
@@ -167,14 +170,14 @@ describe('ResponsesApiSearchProvider', () => {
   it('includes extraHeaders in the request', async () => {
     let calledHeaders: Record<string, string> = {};
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
       calledHeaders = (init?.headers as Record<string, string>) || {};
 
       return new Response(
         JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ResponsesApiSearchProvider({
       apiBase: 'https://custom.api.com/v1',

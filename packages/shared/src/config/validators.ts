@@ -19,6 +19,7 @@ import { CONFIG_DIR } from './paths.ts';
 import { safeJsonParse, readJsonFileSync } from '../utils/files.ts';
 import { EntityColorSchema } from '../colors/validate.ts';
 import { isValidProviderAuthCombination } from './llm-connections.ts';
+import { getWorkspaceSourcesPath } from '../workspaces/storage.ts';
 
 // ============================================================
 // Config Directory
@@ -358,8 +359,6 @@ export function validateAll(workspaceId?: string, workspaceRoot?: string): Valid
 // ============================================================
 // Source & Agent Validators (Folder-Based Architecture)
 // ============================================================
-
-import { getWorkspaceSourcesPath } from '../workspaces/storage.ts';
 
 // --- sources/{slug}/config.json ---
 
@@ -1482,7 +1481,7 @@ export function validateAllPermissions(workspaceRoot: string): ValidationResult 
   warnings.push(...wsResult.warnings);
 
   // Validate all source-level permissions
-  const sourcesDir = join(workspaceRoot, 'sources');
+  const sourcesDir = getWorkspaceSourcesPath(workspaceRoot);
   if (existsSync(sourcesDir)) {
     const entries = readdirSync(sourcesDir);
     for (const entry of entries) {

@@ -57,6 +57,15 @@ pnpm-lock.yaml
 
 # Craft Agent local data (sessions, credentials, config)
 .craft-agent/
+# Craft Agent local workspace artifacts (not for VCS)
+/sessions/
+/.claude-plugin/
+/labels/
+/statuses/
+/events.jsonl
+/views.json
+/config.json
+
 
 # SSH keys and secrets
 *.pem

@@ -8,6 +8,7 @@ import {
   saveWorkspaceConfig,
   createWorkspaceAtPath,
   isValidWorkspace,
+  migrateLegacyWorkspaceData,
 } from '../workspaces/storage.ts';
 import { findIconFile } from '../utils/icon.ts';
 import { extractWorkspaceSlugFromPath } from '../utils/workspace-slug.ts';
@@ -249,6 +250,13 @@ export function loadStoredConfig(): StoredConfig | null {
         } catch (wsError) {
           debug('[config] Failed to create workspace at', workspace.rootPath, ':', wsError instanceof Error ? wsError.message : wsError);
         }
+        continue;
+      }
+
+      try {
+        migrateLegacyWorkspaceData(workspace.rootPath);
+      } catch (wsError) {
+        debug('[config] Failed to migrate workspace runtime data at', workspace.rootPath, ':', wsError instanceof Error ? wsError.message : wsError);
       }
     }
 

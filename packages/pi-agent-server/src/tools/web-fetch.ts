@@ -150,7 +150,10 @@ async function readResponseText(response: Response, maxSize: number): Promise<st
 // Helpers
 // ============================================================
 
-function result(text: string, isError = false): AgentToolResult<typeof schema> {
+type WebFetchDetails = { isError?: boolean };
+type WebFetchResult = AgentToolResult<WebFetchDetails>;
+
+function result(text: string, isError = false): WebFetchResult {
   return {
     content: [{ type: 'text', text }],
     details: isError ? { isError: true } : {},
@@ -170,8 +173,15 @@ function truncate(text: string, maxLen: number = MAX_TEXT_LENGTH): string {
 function ensurePdfjsPolyfills(): void {
   // pdfjs-dist uses browser-only APIs at module scope (e.g. `const SCALE_MATRIX = new DOMMatrix()`).
   // Provide minimal stubs so it can load in Node.js — only text extraction is used, not rendering.
-  if (typeof globalThis.DOMMatrix === 'undefined') {
-    (globalThis as any).DOMMatrix = class DOMMatrix {
+  type PolyfilledGlobal = typeof globalThis & {
+    DOMMatrix?: new (init?: unknown) => unknown;
+    Path2D?: new () => { addPath: () => void };
+    pdfjsWorker?: unknown;
+  };
+  const globalPolyfill = globalThis as PolyfilledGlobal;
+
+  if (typeof globalPolyfill.DOMMatrix === 'undefined') {
+    globalPolyfill.DOMMatrix = class DOMMatrix {
       a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
       m11 = 1; m12 = 0; m13 = 0; m14 = 0;
       m21 = 0; m22 = 1; m23 = 0; m24 = 0;
@@ -184,17 +194,17 @@ function ensurePdfjsPolyfills(): void {
           this.d = init[3]; this.e = init[4]; this.f = init[5];
         }
       }
-      multiply() { return new (globalThis as any).DOMMatrix(); }
+      multiply() { return new DOMMatrix(); }
       preMultiplySelf() { return this; }
       invertSelf() { return this; }
-      translate() { return new (globalThis as any).DOMMatrix(); }
-      scale() { return new (globalThis as any).DOMMatrix(); }
+      translate() { return new DOMMatrix(); }
+      scale() { return new DOMMatrix(); }
       transformPoint(p: any) { return p || { x: 0, y: 0 }; }
-      static fromMatrix() { return new (globalThis as any).DOMMatrix(); }
+      static fromMatrix() { return new DOMMatrix(); }
     };
   }
-  if (typeof globalThis.Path2D === 'undefined') {
-    (globalThis as any).Path2D = class Path2D {
+  if (typeof globalPolyfill.Path2D === 'undefined') {
+    globalPolyfill.Path2D = class Path2D {
       addPath() {}
     };
   }
@@ -204,8 +214,10 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
   ensurePdfjsPolyfills();
   // Pre-load worker on the main thread so pdfjs-dist doesn't try to resolve
   // pdf.worker.mjs from disk (fails when externalized via bun build).
-  if (!(globalThis as any).pdfjsWorker) {
-    (globalThis as any).pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.mjs');
+  type PdfWorkerGlobal = typeof globalThis & { pdfjsWorker?: unknown };
+  const pdfGlobal = globalThis as PdfWorkerGlobal;
+  if (!pdfGlobal.pdfjsWorker) {
+    pdfGlobal.pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.mjs');
   }
   const pdfjs = await import('pdfjs-dist/build/pdf.mjs');
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise;
@@ -226,7 +238,7 @@ async function handlePdf(
   buffer: Buffer,
   url: string,
   saveBinary: (buffer: Buffer, url: string, ext: string) => Promise<string>,
-): Promise<AgentToolResult<typeof schema>> {
+): Promise<WebFetchResult> {
   let savedPath: string;
   try {
     savedPath = await saveBinary(buffer, url, '.pdf');
@@ -255,7 +267,7 @@ async function handleImage(
   url: string,
   contentType: string,
   saveBinary: (buffer: Buffer, url: string, ext: string) => Promise<string>,
-): Promise<AgentToolResult<typeof schema>> {
+): Promise<WebFetchResult> {
   const ext = MIME_TO_EXT[contentType] || '.bin';
   const savedPath = await saveBinary(buffer, url, ext);
   const sizeKb = Math.round(buffer.length / 1024);
@@ -270,7 +282,7 @@ function handleHtml(
   html: string,
   url: string,
   prompt: string | undefined,
-): AgentToolResult<typeof schema> {
+): WebFetchResult {
   const root = parseHtml(html);
   // Strip noise elements from the DOM before selecting mainContent.
   root
@@ -294,7 +306,7 @@ function handleHtml(
 function handleJson(
   raw: string,
   url: string,
-): AgentToolResult<typeof schema> {
+): WebFetchResult {
   let formatted: string;
   try {
     formatted = JSON.stringify(JSON.parse(raw), null, 2);
@@ -307,7 +319,7 @@ function handleJson(
 function handleText(
   raw: string,
   url: string,
-): AgentToolResult<typeof schema> {
+): WebFetchResult {
   return result(`Content from ${url}:\n\n${truncate(raw)}`);
 }
 
@@ -338,8 +350,6 @@ export function createWebFetchTool(
     label: 'Web Fetch',
     description:
       'Fetch a URL and extract its content. Handles HTML (→ markdown), PDF (→ extracted text), images (→ saved to disk), JSON (→ pretty-printed), and plain text.',
-    promptSnippet:
-      'Use web_fetch to retrieve and extract content from a URL. Supports HTML (converted to markdown), PDF (text extraction), images (saved to disk), JSON (pretty-printed), and plain text. Pass url (required) and optional prompt to focus extraction.',
     parameters: schema,
     async execute(toolCallId, params) {
       const { url, prompt } = params;
@@ -382,9 +392,10 @@ export function createWebFetchTool(
       // Use the final URL after redirects for all output messages
       const finalUrl = response.url || url;
 
-      const contentType = (response.headers.get('content-type') || '')
+      const contentTypeHeader = response.headers.get('content-type') || '';
+      const contentType = (contentTypeHeader
         .toLowerCase()
-        .split(';')[0]
+        .split(';')[0] ?? '')
         .trim();
 
       // Binary content types — stream with size limit

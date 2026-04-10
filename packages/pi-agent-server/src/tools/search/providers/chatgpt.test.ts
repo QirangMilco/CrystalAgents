@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+type FetchLike = typeof fetch;
 import { ChatGPTBackendSearchProvider, extractChatGptAccountId } from './chatgpt.ts';
 
 const originalFetch = globalThis.fetch;
@@ -57,7 +60,7 @@ describe('ChatGPTBackendSearchProvider', () => {
     let calledHeaders: Record<string, string> = {};
     let calledBody: any = null;
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (input: FetchInput, init?: FetchInit) => {
       calledUrl = typeof input === 'string' ? input : input.toString();
       calledHeaders = (init?.headers as Record<string, string>) || {};
       calledBody = init?.body ? JSON.parse(String(init.body)) : null;
@@ -81,7 +84,7 @@ describe('ChatGPTBackendSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ChatGPTBackendSearchProvider('my-access-token', 'acc_12345');
     const results = await provider.search('test query', 5);
@@ -122,7 +125,7 @@ describe('ChatGPTBackendSearchProvider', () => {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ChatGPTBackendSearchProvider('token', 'acc_123');
     const results = await provider.search('openai status', 3);
@@ -143,7 +146,7 @@ describe('ChatGPTBackendSearchProvider', () => {
       input: unknown;
     }> = [];
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       attempts.push({
         tools: body?.tools,
@@ -180,7 +183,7 @@ describe('ChatGPTBackendSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ChatGPTBackendSearchProvider('token', 'acc_123');
     const results = await provider.search('retry query', 3);
@@ -212,7 +215,7 @@ describe('ChatGPTBackendSearchProvider', () => {
   it('retries with web_search_preview when first attempt returns 200 with non-JSON body', async () => {
     const attempts: Array<{ tools: unknown }> = [];
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       attempts.push({ tools: body?.tools });
 
@@ -242,7 +245,7 @@ describe('ChatGPTBackendSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ChatGPTBackendSearchProvider('token', 'acc_123');
     const results = await provider.search('parse retry query', 3);
@@ -256,7 +259,7 @@ describe('ChatGPTBackendSearchProvider', () => {
   it('retries with web_search_preview when first attempt returns invalid SSE payload', async () => {
     const attempts: Array<{ tools: unknown }> = [];
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       attempts.push({ tools: body?.tools });
 
@@ -295,7 +298,7 @@ describe('ChatGPTBackendSearchProvider', () => {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ChatGPTBackendSearchProvider('token', 'acc_123');
     const results = await provider.search('invalid sse query', 3);
@@ -307,14 +310,14 @@ describe('ChatGPTBackendSearchProvider', () => {
   });
 
   it('aggregates parse failures when both attempts fail to parse', async () => {
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       const toolType = body?.tools?.[0]?.type;
       return new Response(`Bad Request from ${toolType}`, {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },
       });
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ChatGPTBackendSearchProvider('token', 'acc_123');
 
@@ -337,7 +340,7 @@ describe('ChatGPTBackendSearchProvider', () => {
     globalThis.fetch = (async () => {
       callCount++;
       return new Response('Unauthorized', { status: 401 });
-    }) as typeof fetch;
+    }) as unknown as FetchLike;
 
     const provider = new ChatGPTBackendSearchProvider('bad-token', 'acc_123');
 

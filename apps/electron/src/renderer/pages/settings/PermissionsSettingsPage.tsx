@@ -292,7 +292,7 @@ export default function PermissionsSettingsPage() {
                             displayLabel={displayLabel}
                             secondaryAction={activeWorkspace ? {
                               label: t("common.editFile"),
-                              filePath: `${activeWorkspace.rootPath}/permissions.json`,
+                              filePath: `${activeWorkspace.rootPath}/.craft-agents/permissions.json`,
                             } : undefined}
                           />
                         )

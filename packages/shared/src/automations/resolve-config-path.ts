@@ -5,6 +5,7 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { AUTOMATIONS_CONFIG_FILE } from './constants.ts';
+import { getWorkspaceDataPath } from '../workspaces/data-path.ts';
 
 /**
  * Generate a short 6-character hex ID for matcher identification.
@@ -18,5 +19,5 @@ export function generateShortId(): string {
  * Resolve the automations config path for a workspace.
  */
 export function resolveAutomationsConfigPath(workspaceRoot: string): string {
-  return join(workspaceRoot, AUTOMATIONS_CONFIG_FILE);
+  return join(getWorkspaceDataPath(workspaceRoot), AUTOMATIONS_CONFIG_FILE);
 }

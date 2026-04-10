@@ -38,6 +38,7 @@ export interface CliArgs {
   model: string
   apiKey: string
   baseUrl: string
+  customEndpointApi?: CustomEndpointApiArg
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -63,6 +64,7 @@ export function parseArgs(argv: string[]): CliArgs {
   let model = ''
   let apiKey = ''
   let baseUrl = ''
+  let customEndpointApi: CustomEndpointApiArg | undefined
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -126,6 +128,9 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--base-url':
         baseUrl = args[++i] ?? ''
         break
+      case '--custom-endpoint-api':
+        customEndpointApi = resolveCustomEndpointApi(args[++i])
+        break
       case '--help':
       case '-h':
         command = 'help'
@@ -153,8 +158,9 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!model) model = process.env.LLM_MODEL ?? ''
   if (!apiKey) apiKey = process.env.LLM_API_KEY ?? ''
   if (!baseUrl) baseUrl = process.env.LLM_BASE_URL ?? ''
+  if (!customEndpointApi) customEndpointApi = resolveCustomEndpointApi(process.env.LLM_CUSTOM_ENDPOINT_API)
 
-  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, sources, mode, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl }
+  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, sources, mode, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, customEndpointApi }
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +531,19 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
   huggingface: 'HUGGINGFACE_API_KEY',
 }
 
+const CUSTOM_ENDPOINT_APIS = new Set(['openai-completions', 'openai-responses', 'anthropic-messages'] as const)
+
+type CustomEndpointApiArg = 'openai-completions' | 'openai-responses' | 'anthropic-messages'
+
+function resolveCustomEndpointApi(value: string | undefined): CustomEndpointApiArg | undefined {
+  if (!value) return undefined
+  const normalized = value.trim() as CustomEndpointApiArg
+  if (!CUSTOM_ENDPOINT_APIS.has(normalized)) {
+    throw new Error(`Invalid --custom-endpoint-api: ${value}. Expected one of: openai-completions, openai-responses, anthropic-messages`)
+  }
+  return normalized
+}
+
 function resolveApiKey(provider: string, explicit: string): string {
   if (explicit) return explicit
   if (provider === 'amazon-bedrock') return '' // IAM credentials, not API key
@@ -539,7 +558,7 @@ async function setupLlmConnection(
   client: CliRpcClient,
   args: CliArgs,
 ): Promise<{ connectionSlug: string }> {
-  const { provider, baseUrl } = args
+  const { provider, baseUrl, customEndpointApi } = args
   const key = resolveApiKey(provider, args.apiKey)
   const connectionSlug = `${provider}-cli`
 
@@ -554,9 +573,9 @@ async function setupLlmConnection(
     providerType = 'pi_compat'
     authType = 'api_key_with_endpoint'
     setupPayload.baseUrl = baseUrl
-    setupPayload.customEndpoint = {
-      api: provider === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
-    }
+    const inferredApi = provider === 'anthropic' ? 'anthropic-messages' : 'openai-completions'
+    const selectedApi = customEndpointApi || inferredApi
+    setupPayload.customEndpoint = { api: selectedApi }
     setupPayload.defaultModel = provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o'
   } else if (provider === 'anthropic') {
     providerType = 'anthropic'
@@ -714,6 +733,7 @@ async function cmdValidate(args: CliArgs): Promise<void> {
       baseUrl: args.baseUrl,
       apiKey: args.apiKey,
       provider: args.provider,
+      customEndpointApi: args.customEndpointApi,
     })
     client.destroy()
     if (server) await server.stop()
@@ -798,6 +818,8 @@ export interface ValidateContext {
   apiKey?: string
   /** Provider hint (from --provider, default 'anthropic') */
   provider?: string
+  /** Custom endpoint protocol override (from --custom-endpoint-api) */
+  customEndpointApi?: CustomEndpointApiArg
   workspaceId?: string
   workspaceRootPath?: string
   createdWorkspace?: boolean
@@ -1055,7 +1077,8 @@ export function getValidateSteps(): ValidateStep[] {
           const provider = ctx.provider || 'anthropic'
           const key = ctx.apiKey || process.env.ANTHROPIC_API_KEY || ''
           const slug = `${provider}-cli`
-          const isAnthropicApi = provider === 'anthropic'
+          const inferredApi = provider === 'anthropic' ? 'anthropic-messages' : 'openai-completions'
+          const selectedApi = ctx.customEndpointApi || inferredApi
           await client.invoke('LLM_Connection:save', {
             slug,
             name: `${provider.charAt(0).toUpperCase() + provider.slice(1)} (Custom Endpoint)`,
@@ -1067,8 +1090,8 @@ export function getValidateSteps(): ValidateStep[] {
             slug,
             credential: key,
             baseUrl: ctx.baseUrl,
-            customEndpoint: { api: isAnthropicApi ? 'anthropic-messages' : 'openai-completions' },
-            defaultModel: isAnthropicApi ? 'claude-sonnet-4-6' : 'gpt-4o',
+            customEndpoint: { api: selectedApi },
+            defaultModel: inferredApi === 'anthropic-messages' ? 'claude-sonnet-4-6' : 'gpt-4o',
           }) as { success: boolean; error?: string }
           if (!result?.success) return `setup failed: ${result?.error ?? 'unknown'}`
           await client.invoke('LLM_Connection:setDefault', slug)
@@ -1593,11 +1616,21 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
 
           if (webhookEntries.length > 0) {
             const recentThreshold = Date.now() - 120_000
-            const recentFailed = webhookEntries.find((e: any) =>
-              !e.ok && e.ts > recentThreshold && e.webhook?.method === 'POST'
-            )
+            const recentFailed = webhookEntries.find((e) => {
+              const ts = typeof e.ts === 'number' ? e.ts : 0
+              const ok = Boolean(e.ok)
+              const webhook = (e.webhook && typeof e.webhook === 'object')
+                ? (e.webhook as { method?: unknown })
+                : undefined
+              return !ok && ts > recentThreshold && webhook?.method === 'POST'
+            })
             if (recentFailed) {
-              return `webhook failure recorded: method=${recentFailed.webhook.method}, url=${recentFailed.webhook.url?.slice(0, 50)}`
+              const webhook = (recentFailed.webhook && typeof recentFailed.webhook === 'object')
+                ? (recentFailed.webhook as { method?: unknown; url?: unknown })
+                : undefined
+              const method = typeof webhook?.method === 'string' ? webhook.method : 'n/a'
+              const url = typeof webhook?.url === 'string' ? webhook.url.slice(0, 50) : 'n/a'
+              return `webhook failure recorded: method=${method}, url=${url}`
             }
 
             const latest = webhookEntries[webhookEntries.length - 1] as any
@@ -1670,7 +1703,7 @@ export async function runValidation(
   jsonMode: boolean,
   noSpinner?: boolean,
   workspaceDir?: string,
-  validateOptions?: { baseUrl?: string; apiKey?: string; provider?: string },
+  validateOptions?: { baseUrl?: string; apiKey?: string; provider?: string; customEndpointApi?: CustomEndpointApiArg },
 ): Promise<number> {
   const steps = getValidateSteps()
   const total = steps.length
@@ -1679,6 +1712,7 @@ export async function runValidation(
     baseUrl: validateOptions?.baseUrl,
     apiKey: validateOptions?.apiKey,
     provider: validateOptions?.provider,
+    customEndpointApi: validateOptions?.customEndpointApi,
   }
   let passed = 0
   let failed = 0
@@ -1869,6 +1903,8 @@ LLM Configuration (for 'run' command):
   --model <id>           Model to use (or $LLM_MODEL)
   --api-key <key>        API key (or $LLM_API_KEY, or provider-specific e.g. $OPENAI_API_KEY)
   --base-url <url>       Custom API endpoint (or $LLM_BASE_URL)
+  --custom-endpoint-api  Custom endpoint protocol: openai-completions | openai-responses | anthropic-messages
+                         (or $LLM_CUSTOM_ENDPOINT_API)
 
 Commands:
   run <message>          Spawn server, send message, stream response, exit

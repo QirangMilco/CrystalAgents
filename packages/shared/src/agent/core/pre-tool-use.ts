@@ -35,6 +35,7 @@ import {
 import { FEATURE_FLAGS } from '../../feature-flags.ts';
 import { AGENTS_PLUGIN_NAME } from '../../skills/types.ts';
 import { GLOBAL_AGENT_SKILLS_DIR, PROJECT_AGENT_SKILLS_DIR } from '../../skills/storage.ts';
+import { getWorkspaceSkillsPath } from '../../workspaces/storage.ts';
 import {
   shouldAllowToolInMode,
   isApiEndpointAllowed,
@@ -265,8 +266,8 @@ function resolveSkillPlugin(
     return `${AGENTS_PLUGIN_NAME}:${bareSlug}`;
   }
 
-  // 2. Workspace: {workspaceRoot}/skills/{slug}/SKILL.md
-  if (existsSync(join(workspaceRootPath, 'skills', bareSlug, 'SKILL.md'))) {
+  // 2. Workspace: {workspaceRoot}/.craft-agents/skills/{slug}/SKILL.md
+  if (existsSync(join(getWorkspaceSkillsPath(workspaceRootPath), bareSlug, 'SKILL.md'))) {
     return `${workspaceSlug}:${bareSlug}`;
   }
 

@@ -40,3 +40,5 @@ export {
   CONFIG_DIR,
   DEFAULT_WORKSPACES_DIR,
 } from './storage.ts';
+
+export { getWorkspaceDataPath, WORKSPACE_DATA_DIR } from './data-path.ts';

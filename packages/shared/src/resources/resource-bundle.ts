@@ -24,6 +24,7 @@ import {
   validateBundleFile,
 } from '../utils/bundle-files.ts'
 import { getWorkspaceSourcesPath, getWorkspaceSkillsPath } from '../workspaces/storage.ts'
+import { getWorkspaceDataPath } from '../workspaces/data-path.ts'
 import { loadSourceConfig, getSourcePath } from '../sources/storage.ts'
 import { isBuiltinSource } from '../sources/builtin-sources.ts'
 import { validateSourceConfig } from '../config/validators.ts'
@@ -328,7 +329,7 @@ function exportAutomations(
   selection: string[] | 'all',
   warnings: string[],
 ): AutomationBundleEntry[] {
-  const automationsPath = join(workspaceRootPath, AUTOMATIONS_CONFIG_FILE)
+  const automationsPath = join(getWorkspaceDataPath(workspaceRootPath), AUTOMATIONS_CONFIG_FILE)
 
   if (!existsSync(automationsPath)) {
     warnings.push('No automations.json found in workspace')
@@ -880,7 +881,7 @@ function importAutomations(
   mode: ResourceImportMode,
 ): ImportBucketResult {
   const result = emptyBucketResult()
-  const configPath = join(workspaceRootPath, AUTOMATIONS_CONFIG_FILE)
+  const configPath = join(getWorkspaceDataPath(workspaceRootPath), AUTOMATIONS_CONFIG_FILE)
 
   // Read existing config (if present)
   let existingConfig: { version?: number; automations: Record<string, AutomationMatcher[]> }
@@ -994,8 +995,8 @@ function importAutomations(
 
   // Selectively clear history + retry queue for overwritten matcher IDs
   if (overwrittenIds.size > 0) {
-    const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE)
-    const retryPath = join(workspaceRootPath, AUTOMATIONS_RETRY_QUEUE_FILE)
+    const historyPath = join(getWorkspaceDataPath(workspaceRootPath), AUTOMATIONS_HISTORY_FILE)
+    const retryPath = join(getWorkspaceDataPath(workspaceRootPath), AUTOMATIONS_RETRY_QUEUE_FILE)
     filterJsonlByMatcherIds(historyPath, overwrittenIds)
     filterJsonlByMatcherIds(retryPath, overwrittenIds)
     result.warnings.push(`Cleared history/retry entries for ${overwrittenIds.size} overwritten automation(s)`)

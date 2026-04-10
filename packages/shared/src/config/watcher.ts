@@ -42,6 +42,7 @@ import {
 } from '../sources/storage.ts';
 import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissions-config.ts';
 import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath } from '../workspaces/storage.ts';
+import { WORKSPACE_DATA_DIR } from '../workspaces/data-path.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
 import {
@@ -388,17 +389,21 @@ export class ConfigWatcher {
    * Handle a file change within the workspace directory
    */
   private handleWorkspaceFileChange(relativePath: string, eventType: string): void {
-    const parts = relativePath.split('/');
+    const normalized = relativePath.startsWith(`${WORKSPACE_DATA_DIR}/`)
+      ? relativePath.slice(WORKSPACE_DATA_DIR.length + 1)
+      : relativePath;
+
+    const parts = normalized.split('/');
 
     // Workspace-level permissions.json
-    if (relativePath === 'permissions.json') {
+    if (normalized === 'permissions.json') {
       this.debounce('workspace-permissions', () => this.handleWorkspacePermissionsChange());
       return;
     }
 
     // Workspace-level automations config file
-    if (relativePath === AUTOMATIONS_CONFIG_FILE) {
-      debug('[ConfigWatcher] automations config change detected:', relativePath);
+    if (normalized === AUTOMATIONS_CONFIG_FILE) {
+      debug('[ConfigWatcher] automations config change detected:', normalized);
       this.debounce('automations-config', () => this.handleAutomationsConfigChange());
       return;
     }

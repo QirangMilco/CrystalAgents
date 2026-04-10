@@ -14,12 +14,14 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  renameSync,
 } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
+import { getWorkspaceDataPath } from './data-path.ts';
 import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from '../statuses/storage.ts';
 import { getDefaultLabelConfig, saveLabelConfig } from '../labels/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
@@ -69,7 +71,7 @@ export function getWorkspacePath(workspaceId: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSourcesPath(rootPath: string): string {
-  return join(rootPath, 'sources');
+  return join(getWorkspaceDataPath(rootPath), 'sources');
 }
 
 /**
@@ -77,7 +79,7 @@ export function getWorkspaceSourcesPath(rootPath: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSessionsPath(rootPath: string): string {
-  return join(rootPath, 'sessions');
+  return join(getWorkspaceDataPath(rootPath), 'sessions');
 }
 
 /**
@@ -85,7 +87,7 @@ export function getWorkspaceSessionsPath(rootPath: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSkillsPath(rootPath: string): string {
-  return join(rootPath, 'skills');
+  return join(getWorkspaceDataPath(rootPath), 'skills');
 }
 
 // ============================================================
@@ -204,11 +206,11 @@ export function loadWorkspace(rootPath: string): LoadedWorkspace | null {
   // Ensure plugin manifest exists (migration for existing workspaces)
   ensurePluginManifest(rootPath, config.name);
 
-  // Ensure skills directory exists (migration for existing workspaces)
-  const skillsPath = getWorkspaceSkillsPath(rootPath);
-  if (!existsSync(skillsPath)) {
-    mkdirSync(skillsPath, { recursive: true });
-  }
+  // Migrate legacy root-level runtime artifacts into .craft-agents
+  migrateLegacyWorkspaceData(rootPath);
+
+  // Ensure workspace data directories exist (migration for existing workspaces)
+  ensureWorkspaceDataDirectories(rootPath);
 
   return {
     config,
@@ -326,9 +328,8 @@ export function createWorkspaceAtPath(
 
   // Create workspace directory structure
   mkdirSync(rootPath, { recursive: true });
-  mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
-  mkdirSync(getWorkspaceSessionsPath(rootPath), { recursive: true });
-  mkdirSync(getWorkspaceSkillsPath(rootPath), { recursive: true });
+  migrateLegacyWorkspaceData(rootPath);
+  ensureWorkspaceDataDirectories(rootPath);
 
   // Save config
   saveWorkspaceConfig(rootPath, config);
@@ -527,6 +528,76 @@ export function ensurePluginManifest(rootPath: string, workspaceName: string): v
   };
 
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+}
+
+const LEGACY_WORKSPACE_DATA_DIRS = [
+  'sources',
+  'sessions',
+  'skills',
+  'labels',
+  'statuses',
+] as const;
+
+const LEGACY_WORKSPACE_DATA_FILES = [
+  'permissions.json',
+  'views.json',
+  'automations.json',
+  'automations-history.jsonl',
+  'automations-retry-queue.jsonl',
+  'events.jsonl',
+] as const;
+
+function ensureWorkspaceDataDirectories(rootPath: string): void {
+  mkdirSync(getWorkspaceDataPath(rootPath), { recursive: true });
+  mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
+  mkdirSync(getWorkspaceSessionsPath(rootPath), { recursive: true });
+  mkdirSync(getWorkspaceSkillsPath(rootPath), { recursive: true });
+}
+
+function buildBackupName(name: string): string {
+  return `${name}.legacy-backup-${Date.now()}`;
+}
+
+/**
+ * 迁移历史工作区数据：
+ * - root/{sessions,skills,sources,labels,statuses} -> root/.craft-agents/*
+ * - root/{permissions.json,views.json,automations*.jsonl,events.jsonl} -> root/.craft-agents/*
+ *
+ * 冲突策略：新目录优先；旧目录/文件重命名为 *.legacy-backup-{timestamp}
+ */
+export function migrateLegacyWorkspaceData(rootPath: string): void {
+  const dataDir = getWorkspaceDataPath(rootPath);
+  mkdirSync(dataDir, { recursive: true });
+
+  for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
+    const legacyPath = join(rootPath, dirName);
+    const targetPath = join(dataDir, dirName);
+
+    if (!existsSync(legacyPath) || !statSync(legacyPath).isDirectory()) continue;
+
+    if (!existsSync(targetPath)) {
+      renameSync(legacyPath, targetPath);
+      continue;
+    }
+
+    const backupPath = join(rootPath, buildBackupName(dirName));
+    renameSync(legacyPath, backupPath);
+  }
+
+  for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
+    const legacyPath = join(rootPath, fileName);
+    const targetPath = join(dataDir, fileName);
+
+    if (!existsSync(legacyPath) || !statSync(legacyPath).isFile()) continue;
+
+    if (!existsSync(targetPath)) {
+      renameSync(legacyPath, targetPath);
+      continue;
+    }
+
+    const backupPath = join(rootPath, buildBackupName(fileName));
+    renameSync(legacyPath, backupPath);
+  }
 }
 
 export { CONFIG_DIR, DEFAULT_WORKSPACES_DIR };

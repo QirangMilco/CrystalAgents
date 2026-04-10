@@ -20,6 +20,7 @@ import { CONFIG_DIR } from '../config/paths.ts';
 import { getBundledAssetsDir } from '../utils/paths.ts';
 import { getSourcePath } from '../sources/storage.ts';
 import { isValidPermissionsFile } from '../config/validators.ts';
+import { getWorkspaceDataPath } from '../workspaces/data-path.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import {
   SAFE_MODE_CONFIG,
@@ -435,7 +436,7 @@ export function validatePermissionsConfig(config: PermissionsConfigFile): string
  * Get path to workspace permissions.json
  */
 export function getWorkspacePermissionsPath(workspaceRootPath: string): string {
-  return join(workspaceRootPath, 'permissions.json');
+  return join(getWorkspaceDataPath(workspaceRootPath), 'permissions.json');
 }
 
 /**
@@ -520,7 +521,7 @@ export function loadRawSourcePermissions(workspaceRootPath: string, sourceSlug: 
  */
 export function saveWorkspacePermissions(workspaceRootPath: string, config: PermissionsConfigFile): void {
   const filePath = getWorkspacePermissionsPath(workspaceRootPath);
-  mkdirSync(workspaceRootPath, { recursive: true });
+  mkdirSync(getWorkspaceDataPath(workspaceRootPath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
   permissionsConfigCache.invalidateWorkspace(workspaceRootPath);
 }

@@ -3382,7 +3382,7 @@ function AppShellContent({
             align="start"
             secondaryAction={{
               label: 'Edit File',
-              filePath: `${activeWorkspace.rootPath}/views.json`,
+              filePath: `${activeWorkspace.rootPath}/.craft-agents/views.json`,
             }}
             {...getEditConfig('edit-views', activeWorkspace.rootPath)}
           />
