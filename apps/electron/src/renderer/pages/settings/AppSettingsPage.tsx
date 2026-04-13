@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,7 @@ import {
   SettingsInput,
 } from '@/components/settings'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
+import { useAppShellContext } from '@/context/AppShellContext'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -94,6 +96,7 @@ function validateProxyUrl(url: string): string | undefined {
 
 export default function AppSettingsPage() {
   const { t } = useTranslation()
+  const { onRefreshWorkspaces, onRefreshSessions } = useAppShellContext()
 
   // Notifications state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
@@ -114,6 +117,37 @@ export default function AppSettingsPage() {
   const isElectron = window.electronAPI.getRuntimeEnvironment() === 'electron'
   const updateChecker = useUpdateChecker()
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false)
+
+  // Manual import state (official Craft Agents -> current variant)
+  const [isDetectingImportSource, setIsDetectingImportSource] = useState(false)
+  const [isImportingOfficialData, setIsImportingOfficialData] = useState(false)
+  const [importDetection, setImportDetection] = useState<{
+    found: boolean
+    sourcePath: string
+    hasConfig: boolean
+    hasWorkspaces: boolean
+    availableEntries: Array<{
+      name: string
+      path: string
+      kind: 'file' | 'directory'
+      exists: boolean
+      description: string
+    }>
+  } | null>(null)
+  const [importSourcePath, setImportSourcePath] = useState('')
+  const [lastImportResult, setLastImportResult] = useState<{
+    success: boolean
+    sourcePath: string
+    imported: string[]
+    skipped: string[]
+    warnings: string[]
+    error?: string
+    results: Array<{
+      name: string
+      status: 'imported' | 'skipped' | 'missing' | 'failed'
+      detail: string
+    }>
+  } | null>(null)
 
   const handleCheckForUpdates = useCallback(async () => {
     setIsCheckingForUpdates(true)
@@ -148,6 +182,24 @@ export default function AppSettingsPage() {
   useEffect(() => {
     loadSettings()
   }, [])
+
+  const detectImportSource = useCallback(async (sourcePath?: string) => {
+    if (!window.electronAPI?.detectOfficialImportSource) return
+    setIsDetectingImportSource(true)
+    try {
+      const detected = await window.electronAPI.detectOfficialImportSource(sourcePath)
+      setImportDetection(detected)
+      setImportSourcePath(detected.sourcePath)
+    } catch (error) {
+      console.error('Failed to detect import source:', error)
+    } finally {
+      setIsDetectingImportSource(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void detectImportSource()
+  }, [detectImportSource])
 
   const handleNotificationsEnabledChange = useCallback(async (enabled: boolean) => {
     setNotificationsEnabled(enabled)
@@ -198,6 +250,59 @@ export default function AppSettingsPage() {
     setProxyForm(savedProxyForm)
     setProxyError(undefined)
   }, [savedProxyForm])
+
+  const handleChooseImportFolder = useCallback(async () => {
+    const path = await window.electronAPI.openFolderDialog()
+    if (!path) return
+    setImportSourcePath(path)
+    await detectImportSource(path)
+  }, [detectImportSource])
+
+  const handleImportOfficialData = useCallback(async () => {
+    if (!window.electronAPI?.importOfficialData) return
+
+    const confirmed = window.confirm(t('settings.app.import.confirm'))
+    if (!confirmed) return
+
+    setIsImportingOfficialData(true)
+    try {
+      const sourcePath = importSourcePath.trim() || importDetection?.sourcePath
+      const result = await window.electronAPI.importOfficialData({
+        sourcePath,
+        includeEntries: ['config.json', 'workspaces'],
+      })
+      setLastImportResult(result)
+
+      if (result.success) {
+        const importedSummary = result.results
+          .filter(item => item.status === 'imported')
+          .map(item => `${item.name}: ${item.detail}`)
+          .join(' · ')
+
+        toast.success(t('settings.app.import.success'), {
+          description: importedSummary || t('settings.app.import.importedSummary', { count: result.imported.length }),
+        })
+
+        onRefreshWorkspaces?.()
+        await onRefreshSessions?.()
+        toast.info(t('settings.app.import.refreshDone'))
+      } else {
+        const failedSummary = result.results
+          .map(item => `${item.name}: ${item.detail}`)
+          .join(' · ')
+        toast.error(t('settings.app.import.failed'), {
+          description: failedSummary || result.error || t('toast.unknownError'),
+        })
+      }
+
+      await detectImportSource(sourcePath)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(t('settings.app.import.failed'), { description: message })
+    } finally {
+      setIsImportingOfficialData(false)
+    }
+  }, [detectImportSource, importDetection?.sourcePath, importSourcePath, t])
 
   return (
     <div className="h-full flex flex-col">
@@ -305,6 +410,97 @@ export default function AppSettingsPage() {
                       </Button>
                     </SettingsCardFooter>
                   )}
+                </SettingsCard>
+              </SettingsSection>
+
+              {/* Data Import */}
+              <SettingsSection
+                title={t("settings.app.import.sectionTitle")}
+                description={t("settings.app.import.description")}
+              >
+                <SettingsCard>
+                  <div className="px-3 py-3 space-y-4">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">{t('settings.app.import.sourceLabel')}</div>
+                      <input
+                        value={importSourcePath}
+                        onChange={(e) => setImportSourcePath(e.target.value)}
+                        placeholder={t('settings.app.import.sourcePlaceholder')}
+                        className="w-full h-9 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        {importDetection?.found ? t('settings.app.import.statusFound') : t('settings.app.import.statusMissing')}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void detectImportSource()}
+                        disabled={isDetectingImportSource || isImportingOfficialData}
+                      >
+                        {isDetectingImportSource ? (
+                          <>
+                            <Spinner className="mr-1.5" />
+                            {t('common.checking')}
+                          </>
+                        ) : t('settings.app.import.actionDetectDefault')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleChooseImportFolder()}
+                        disabled={isDetectingImportSource || isImportingOfficialData}
+                      >
+                        {t('settings.app.import.actionSelectFolder')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => void handleImportOfficialData()}
+                        disabled={isImportingOfficialData || !importDetection?.found}
+                      >
+                        {isImportingOfficialData ? (
+                          <>
+                            <Spinner className="mr-1.5" />
+                            {t('settings.app.import.importing')}
+                          </>
+                        ) : t('settings.app.import.actionImport')}
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-3">
+                      <div className="text-sm font-medium">{t('settings.app.import.contentsTitle')}</div>
+                      <ul className="space-y-1 text-xs text-muted-foreground">
+                        {(importDetection?.availableEntries ?? []).map((entry) => (
+                          <li key={entry.name}>
+                            <span className="font-medium text-foreground">{entry.name}</span>
+                            {' — '}
+                            {entry.description}
+                            {' · '}
+                            {entry.exists ? t('settings.app.import.entryExists') : t('settings.app.import.entryMissing')}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {lastImportResult && (
+                      <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-3">
+                        <div className="text-sm font-medium">{t('settings.app.import.resultTitle')}</div>
+                        <ul className="space-y-1 text-xs text-muted-foreground">
+                          {lastImportResult.results.map((item) => (
+                            <li key={`${item.name}-${item.status}`}>
+                              <span className="font-medium text-foreground">{item.name}</span>
+                              {' · '}
+                              {t(`settings.app.import.result.${item.status}`)}
+                              {' · '}
+                              {item.detail}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </SettingsCard>
               </SettingsSection>
 

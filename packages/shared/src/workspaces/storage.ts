@@ -15,6 +15,7 @@ import {
   rmSync,
   statSync,
   renameSync,
+  cpSync,
 } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
@@ -206,10 +207,8 @@ export function loadWorkspace(rootPath: string): LoadedWorkspace | null {
   // Ensure plugin manifest exists (migration for existing workspaces)
   ensurePluginManifest(rootPath, config.name);
 
-  // Migrate legacy root-level runtime artifacts into .craft-agents
-  migrateLegacyWorkspaceData(rootPath);
-
-  // Ensure workspace data directories exist (migration for existing workspaces)
+  // Ensure workspace data directories exist for the current format.
+  // Legacy runtime data migration is user-triggered only.
   ensureWorkspaceDataDirectories(rootPath);
 
   return {
@@ -328,7 +327,6 @@ export function createWorkspaceAtPath(
 
   // Create workspace directory structure
   mkdirSync(rootPath, { recursive: true });
-  migrateLegacyWorkspaceData(rootPath);
   ensureWorkspaceDataDirectories(rootPath);
 
   // Save config
@@ -565,6 +563,50 @@ function buildBackupName(name: string): string {
  * 1) 显式标记：存在 .craft-agent
  * 2) 隐式结构：存在 legacy 目录/文件（sessions/skills/sources/...）
  */
+export interface LegacyWorkspaceDetectionResult {
+  hasLegacyData: boolean;
+  officialDataDir: string;
+  workspaceDataDir: string;
+  detectedEntries: Array<{
+    name: string;
+    sourcePath: string;
+    targetPath: string;
+    kind: 'official-dir' | 'official-file' | 'legacy-dir' | 'legacy-file';
+    targetExists: boolean;
+  }>;
+}
+
+export interface WorkspaceRecordImportStatus {
+  sourcePath: string;
+  workspaceDataDir: string;
+  sourceExists: boolean;
+  sourceIsDirectory: boolean;
+  hasImportableData: boolean;
+  availableEntries: Array<{
+    name: string;
+    sourcePath: string;
+    targetPath: string;
+    kind: 'dir' | 'file';
+    targetExists: boolean;
+  }>;
+  missingEntries: string[];
+  message?: string;
+}
+
+export interface WorkspaceRecordImportResult {
+  sourcePath: string;
+  workspaceDataDir: string;
+  imported: string[];
+  skipped: string[];
+  warnings: string[];
+  results: Array<{
+    name: string;
+    status: 'imported' | 'skipped' | 'missing' | 'failed';
+    detail: string;
+  }>;
+  hasImportableData: boolean;
+}
+
 function isOfficialManagedWorkspace(rootPath: string): boolean {
   const explicitDir = join(rootPath, OFFICIAL_WORKSPACE_DATA_DIR);
   if (existsSync(explicitDir) && statSync(explicitDir).isDirectory()) {
@@ -588,11 +630,326 @@ function isOfficialManagedWorkspace(rootPath: string): boolean {
   return false;
 }
 
-function moveEntryWithBackup(sourcePath: string, targetPath: string, backupBaseDir: string, backupName: string): void {
+export function detectLegacyWorkspaceData(rootPath: string): LegacyWorkspaceDetectionResult {
+  const dataDir = getWorkspaceDataPath(rootPath);
+  const officialDataDir = join(rootPath, OFFICIAL_WORKSPACE_DATA_DIR);
+  const detectedEntries: LegacyWorkspaceDetectionResult['detectedEntries'] = [];
+
+  for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
+    const sourcePath = join(officialDataDir, dirName);
+    if (existsSync(sourcePath)) {
+      detectedEntries.push({
+        name: dirName,
+        sourcePath,
+        targetPath: join(dataDir, dirName),
+        kind: 'official-dir',
+        targetExists: existsSync(join(dataDir, dirName)),
+      });
+    }
+  }
+
+  for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
+    const sourcePath = join(officialDataDir, fileName);
+    if (existsSync(sourcePath)) {
+      detectedEntries.push({
+        name: fileName,
+        sourcePath,
+        targetPath: join(dataDir, fileName),
+        kind: 'official-file',
+        targetExists: existsSync(join(dataDir, fileName)),
+      });
+    }
+  }
+
+  for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
+    const sourcePath = join(rootPath, dirName);
+    if (existsSync(sourcePath)) {
+      detectedEntries.push({
+        name: dirName,
+        sourcePath,
+        targetPath: join(dataDir, dirName),
+        kind: 'legacy-dir',
+        targetExists: existsSync(join(dataDir, dirName)),
+      });
+    }
+  }
+
+  for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
+    const sourcePath = join(rootPath, fileName);
+    if (existsSync(sourcePath)) {
+      detectedEntries.push({
+        name: fileName,
+        sourcePath,
+        targetPath: join(dataDir, fileName),
+        kind: 'legacy-file',
+        targetExists: existsSync(join(dataDir, fileName)),
+      });
+    }
+  }
+
+  return {
+    hasLegacyData: detectedEntries.length > 0,
+    officialDataDir,
+    workspaceDataDir: dataDir,
+    detectedEntries,
+  };
+}
+
+export function detectWorkspaceRecordImportStatus(rootPath: string, sourcePath: string): WorkspaceRecordImportStatus {
+  const workspaceDataDir = getWorkspaceDataPath(rootPath);
+
+  if (!sourcePath || !sourcePath.trim()) {
+    return {
+      sourcePath,
+      workspaceDataDir,
+      sourceExists: false,
+      sourceIsDirectory: false,
+      hasImportableData: false,
+      availableEntries: [],
+      missingEntries: [...LEGACY_WORKSPACE_DATA_DIRS, ...LEGACY_WORKSPACE_DATA_FILES],
+      message: 'Source path is empty.',
+    };
+  }
+
+  const sourceExists = existsSync(sourcePath);
+  const sourceIsDirectory = sourceExists ? statSync(sourcePath).isDirectory() : false;
+  if (!sourceExists || !sourceIsDirectory) {
+    return {
+      sourcePath,
+      workspaceDataDir,
+      sourceExists,
+      sourceIsDirectory,
+      hasImportableData: false,
+      availableEntries: [],
+      missingEntries: [...LEGACY_WORKSPACE_DATA_DIRS, ...LEGACY_WORKSPACE_DATA_FILES],
+      message: !sourceExists ? 'Source path does not exist.' : 'Source path is not a directory.',
+    };
+  }
+
+  const availableEntries: WorkspaceRecordImportStatus['availableEntries'] = [];
+  const missingEntries: string[] = [];
+
+  for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
+    const sourceEntry = join(sourcePath, dirName);
+    if (existsSync(sourceEntry) && statSync(sourceEntry).isDirectory()) {
+      const targetPath = join(workspaceDataDir, dirName);
+      availableEntries.push({
+        name: dirName,
+        sourcePath: sourceEntry,
+        targetPath,
+        kind: 'dir',
+        targetExists: existsSync(targetPath),
+      });
+    } else {
+      missingEntries.push(dirName);
+    }
+  }
+
+  for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
+    const sourceEntry = join(sourcePath, fileName);
+    if (existsSync(sourceEntry) && statSync(sourceEntry).isFile()) {
+      const targetPath = join(workspaceDataDir, fileName);
+      availableEntries.push({
+        name: fileName,
+        sourcePath: sourceEntry,
+        targetPath,
+        kind: 'file',
+        targetExists: existsSync(targetPath),
+      });
+    } else {
+      missingEntries.push(fileName);
+    }
+  }
+
+  return {
+    sourcePath,
+    workspaceDataDir,
+    sourceExists: true,
+    sourceIsDirectory: true,
+    hasImportableData: availableEntries.length > 0,
+    availableEntries,
+    missingEntries,
+  };
+}
+
+export function importWorkspaceRecordDataFromSource(rootPath: string, sourcePath: string): WorkspaceRecordImportResult {
+  const status = detectWorkspaceRecordImportStatus(rootPath, sourcePath);
+  const results: WorkspaceRecordImportResult['results'] = [];
+  const imported: string[] = [];
+  const skipped: string[] = [];
+  const warnings: string[] = [];
+
+  if (!status.sourceExists || !status.sourceIsDirectory || !status.hasImportableData) {
+    if (status.message) {
+      warnings.push(status.message);
+    }
+    for (const name of status.missingEntries) {
+      results.push({
+        name,
+        status: 'missing',
+        detail: 'Entry not found in selected source directory.',
+      });
+    }
+    return {
+      sourcePath,
+      workspaceDataDir: status.workspaceDataDir,
+      imported,
+      skipped,
+      warnings,
+      results,
+      hasImportableData: false,
+    };
+  }
+
+  if (status.sourcePath === status.workspaceDataDir) {
+    const detail = 'Source directory is the current workspace data directory; import aborted.';
+    warnings.push(detail);
+    return {
+      sourcePath,
+      workspaceDataDir: status.workspaceDataDir,
+      imported,
+      skipped,
+      warnings,
+      results: [
+        {
+          name: '.',
+          status: 'failed',
+          detail,
+        },
+      ],
+      hasImportableData: true,
+    };
+  }
+
+  mkdirSync(status.workspaceDataDir, { recursive: true });
+
+  for (const entry of status.availableEntries) {
+    if (entry.targetExists) {
+      skipped.push(entry.name);
+      results.push({
+        name: entry.name,
+        status: 'skipped',
+        detail: 'Target entry already exists in current workspace data directory.',
+      });
+      continue;
+    }
+
+    try {
+      cpSync(entry.sourcePath, entry.targetPath, { recursive: entry.kind === 'dir', force: false, errorOnExist: false });
+      imported.push(entry.name);
+      results.push({
+        name: entry.name,
+        status: 'imported',
+        detail: 'Imported into current workspace data directory.',
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      warnings.push(`${entry.name}: ${detail}`);
+      results.push({
+        name: entry.name,
+        status: 'failed',
+        detail,
+      });
+    }
+  }
+
+  for (const missing of status.missingEntries) {
+    results.push({
+      name: missing,
+      status: 'missing',
+      detail: 'Entry not found in selected source directory.',
+    });
+  }
+
+  return {
+    sourcePath,
+    workspaceDataDir: status.workspaceDataDir,
+    imported,
+    skipped,
+    warnings,
+    results,
+    hasImportableData: true,
+  };
+}
+
+export function importWorkspaceRecordDataFromWorkspaceRoot(rootPath: string): WorkspaceRecordImportResult {
+  const detection = detectLegacyWorkspaceData(rootPath);
+  const results: WorkspaceRecordImportResult['results'] = [];
+  const imported: string[] = [];
+  const skipped: string[] = [];
+  const warnings: string[] = [];
+
+  if (!detection.hasLegacyData) {
+    return {
+      sourcePath: detection.officialDataDir,
+      workspaceDataDir: detection.workspaceDataDir,
+      imported,
+      skipped,
+      warnings,
+      results,
+      hasImportableData: false,
+    };
+  }
+
+  mkdirSync(detection.workspaceDataDir, { recursive: true });
+
+  for (const entry of detection.detectedEntries) {
+    if (entry.targetExists) {
+      skipped.push(entry.name);
+      results.push({
+        name: entry.name,
+        status: 'skipped',
+        detail: 'Target entry already exists in current workspace data directory.',
+      });
+      continue;
+    }
+
+    const isDir = entry.kind === 'official-dir' || entry.kind === 'legacy-dir';
+    try {
+      cpSync(entry.sourcePath, entry.targetPath, { recursive: isDir, force: false, errorOnExist: false });
+      imported.push(entry.name);
+      results.push({
+        name: entry.name,
+        status: 'imported',
+        detail: 'Copied into current workspace data directory.',
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      warnings.push(`${entry.name}: ${detail}`);
+      results.push({
+        name: entry.name,
+        status: 'failed',
+        detail,
+      });
+    }
+  }
+
+  return {
+    sourcePath: detection.officialDataDir,
+    workspaceDataDir: detection.workspaceDataDir,
+    imported,
+    skipped,
+    warnings,
+    results,
+    hasImportableData: true,
+  };
+}
+
+function moveEntryWithBackup(
+  sourcePath: string,
+  targetPath: string,
+  backupBaseDir: string,
+  backupName: string,
+  onConflict: 'backup' | 'skip' = 'backup',
+): void {
   if (!existsSync(sourcePath)) return;
 
   if (!existsSync(targetPath)) {
     renameSync(sourcePath, targetPath);
+    return;
+  }
+
+  if (onConflict === 'skip') {
     return;
   }
 
@@ -606,7 +963,9 @@ function moveEntryWithBackup(sourcePath: string, targetPath: string, backupBaseD
  * - root/{sessions,skills,sources,labels,statuses} -> root/<WORKSPACE_DATA_DIR>/*
  * - root/{permissions.json,views.json,automations*.jsonl,events.jsonl} -> root/<WORKSPACE_DATA_DIR>/*
  *
- * 冲突策略：新目录优先；旧目录/文件重命名为 *.legacy-backup-{timestamp}
+ * 冲突策略：
+ * - .craft-agent -> 新目录：目标已存在则跳过（避免并存场景反复产生 backup）
+ * - 根目录 legacy -> 新目录：目标已存在则将旧项重命名为 *.legacy-backup-{timestamp}
  */
 export function migrateLegacyWorkspaceData(rootPath: string): void {
   const dataDir = getWorkspaceDataPath(rootPath);
@@ -614,18 +973,20 @@ export function migrateLegacyWorkspaceData(rootPath: string): void {
 
   const officialDataDir = join(rootPath, OFFICIAL_WORKSPACE_DATA_DIR);
 
-  // 情况 A：存在 .craft-agent，先迁移其内部内容到目标目录
+  // 情况 A：存在 .craft-agent，先迁移其内部内容到目标目录。
+  // 注意：若目标已存在，跳过冲突项而不是重命名为 legacy-backup。
+  // 这样可避免与官方目录并存时在每次加载/交互中持续产生 backup 噪音文件。
   if (existsSync(officialDataDir) && statSync(officialDataDir).isDirectory()) {
     for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
       const sourcePath = join(officialDataDir, dirName);
       const targetPath = join(dataDir, dirName);
-      moveEntryWithBackup(sourcePath, targetPath, officialDataDir, dirName);
+      moveEntryWithBackup(sourcePath, targetPath, officialDataDir, dirName, 'skip');
     }
 
     for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
       const sourcePath = join(officialDataDir, fileName);
       const targetPath = join(dataDir, fileName);
-      moveEntryWithBackup(sourcePath, targetPath, officialDataDir, fileName);
+      moveEntryWithBackup(sourcePath, targetPath, officialDataDir, fileName, 'skip');
     }
 
     // 若 .craft-agent 迁移后已为空，则保留目录不删除（避免破坏用户预期）

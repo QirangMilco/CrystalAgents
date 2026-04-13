@@ -34,6 +34,11 @@ export {
   deleteWorkspaceFolder,
   isValidWorkspace,
   renameWorkspaceFolder,
+  detectLegacyWorkspaceData,
+  migrateLegacyWorkspaceData,
+  detectWorkspaceRecordImportStatus,
+  importWorkspaceRecordDataFromSource,
+  importWorkspaceRecordDataFromWorkspaceRoot,
   // Auto-discovery
   discoverWorkspacesInDefaultLocation,
   // Constants

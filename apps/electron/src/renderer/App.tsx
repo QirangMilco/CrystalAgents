@@ -1659,6 +1659,7 @@ export default function App() {
     // Workspace
     onSelectWorkspace: handleSelectWorkspace,
     onRefreshWorkspaces: handleRefreshWorkspaces,
+    onRefreshSessions: loadSessionsFromServer,
     // App actions
     onOpenSettings: handleOpenSettings,
     onOpenKeyboardShortcuts: handleOpenKeyboardShortcuts,
@@ -1699,6 +1700,7 @@ export default function App() {
     handleOpenUrl,
     handleSelectWorkspace,
     handleRefreshWorkspaces,
+    loadSessionsFromServer,
     handleOpenSettings,
     handleOpenKeyboardShortcuts,
     handleOpenStoredUserPreferences,

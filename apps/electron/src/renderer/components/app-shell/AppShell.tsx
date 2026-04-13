@@ -504,6 +504,7 @@ function AppShellContent({
     sessionOptions,
     onSelectWorkspace,
     onRefreshWorkspaces,
+    onRefreshSessions,
     onDeleteSession,
     onFlagSession,
     onUnflagSession,
@@ -763,6 +764,7 @@ function AppShellContent({
   // When empty, the dropdown shows hierarchical submenus. When typing, shows a flat filtered list.
   const [filterDropdownQuery, setFilterDropdownQuery] = React.useState('')
   const [filterAltHeld, setFilterAltHeld] = React.useState(false)
+  const [isImportingWorkspaceRecords, setIsImportingWorkspaceRecords] = React.useState(false)
 
   // Reset search only when navigator or filter changes (not when selecting sessions)
   const navFilterKey = React.useMemo(() => {
@@ -822,6 +824,151 @@ function AppShellContent({
   }, [skills, setSkillsAtom])
   // Automations — state, handlers, loading, subscriptions
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
+
+  const buildDefaultWorkspaceImportPath = React.useCallback(() => {
+    const rootPath = activeWorkspace?.rootPath
+    if (!rootPath) return '.craft-agent'
+    const normalized = rootPath.replace(/[\\/]$/, '')
+    return `${normalized}/.craft-agent`
+  }, [activeWorkspace?.rootPath])
+
+  const runWorkspaceRecordImport = React.useCallback(async (sourcePath: string) => {
+    if (!window.electronAPI || !activeWorkspaceId) return
+
+    const status = await window.electronAPI.getWorkspaceRecordImportStatus(activeWorkspaceId, sourcePath)
+    if (!status.sourceExists) {
+      toast.error(t('session.workspaceRecordImportInvalidSource'), {
+        description: t('session.workspaceRecordImportInvalidSourceDesc', { path: status.sourcePath || sourcePath }),
+      })
+      return
+    }
+
+    if (!status.sourceIsDirectory) {
+      toast.error(t('session.workspaceRecordImportInvalidSource'), {
+        description: t('session.workspaceRecordImportNotDirectoryDesc', { path: status.sourcePath }),
+      })
+      return
+    }
+
+    if (!status.hasImportableData) {
+      toast.error(t('session.workspaceRecordImportNoData'), {
+        description: t('session.workspaceRecordImportNoDataDesc', { path: status.sourcePath }),
+      })
+      return
+    }
+
+    const importNames = status.availableEntries.map((entry) => entry.name).join('、')
+    const skippedNames = status.availableEntries.filter((entry) => entry.targetExists).map((entry) => entry.name).join('、')
+    const confirmLines = [
+      t('session.workspaceRecordImportConfirm'),
+      '',
+      t('session.workspaceRecordImportSourceLine', { path: status.sourcePath }),
+      t('session.workspaceRecordImportImportEntriesLine', { entries: importNames }),
+    ]
+    if (skippedNames) {
+      confirmLines.push(t('session.workspaceRecordImportSkipEntriesLine', { entries: skippedNames }))
+    }
+
+    const confirmed = window.confirm(confirmLines.join('\n'))
+    if (!confirmed) return
+
+    setIsImportingWorkspaceRecords(true)
+    try {
+      const result = await window.electronAPI.importWorkspaceRecordData(activeWorkspaceId, status.sourcePath)
+      const importedCount = result.results.filter((item) => item.status === 'imported').length
+      const skippedCount = result.results.filter((item) => item.status === 'skipped').length
+      const failedCount = result.results.filter((item) => item.status === 'failed').length
+
+      toast.success(t('session.workspaceRecordImportDone'), {
+        description: t('session.workspaceRecordImportDoneDesc', {
+          imported: importedCount,
+          skipped: skippedCount,
+          failed: failedCount,
+        }),
+      })
+
+      onRefreshWorkspaces?.()
+      await onRefreshSessions?.()
+    } catch (error) {
+      toast.error(t('session.workspaceRecordImportFailed'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setIsImportingWorkspaceRecords(false)
+    }
+  }, [activeWorkspaceId, onRefreshSessions, onRefreshWorkspaces, t])
+
+  const handleWorkspaceRecordImportAuto = React.useCallback(async () => {
+    if (!window.electronAPI || !activeWorkspaceId) return
+
+    const defaultImportPath = buildDefaultWorkspaceImportPath()
+    try {
+      const legacyStatus = await window.electronAPI.getWorkspaceLegacyStatus(activeWorkspaceId)
+      if (legacyStatus.hasLegacyData) {
+        const names = legacyStatus.detectedEntries.map((entry) => entry.name).join('、')
+        const confirmed = window.confirm([
+          t('session.importWorkspaceLegacyConfirm'),
+          '',
+          t('session.workspaceRecordImportImportEntriesLine', { entries: names }),
+        ].join('\n'))
+        if (!confirmed) return
+
+        setIsImportingWorkspaceRecords(true)
+        try {
+          const result = await window.electronAPI.migrateWorkspaceLegacyData(activeWorkspaceId)
+          const importedCount = result.imported ?? result.results?.filter((item) => item.status === 'imported').length ?? 0
+          const skippedCount = result.skipped ?? result.results?.filter((item) => item.status === 'skipped').length ?? 0
+          const failedCount = result.failed ?? result.results?.filter((item) => item.status === 'failed').length ?? 0
+
+          toast.success(t('session.workspaceRecordImportDone'), {
+            description: t('session.workspaceRecordImportDoneDesc', {
+              imported: importedCount,
+              skipped: skippedCount,
+              failed: failedCount,
+            }),
+          })
+
+          onRefreshWorkspaces?.()
+          await onRefreshSessions?.()
+        } finally {
+          setIsImportingWorkspaceRecords(false)
+        }
+        return
+      }
+
+      const defaultStatus = await window.electronAPI.getWorkspaceRecordImportStatus(activeWorkspaceId, defaultImportPath)
+      if (!defaultStatus.hasImportableData) {
+        toast.error(t('session.workspaceRecordImportNoData'), {
+          description: t('session.workspaceRecordImportNoDataDesc', { path: defaultImportPath }),
+        })
+        return
+      }
+
+      await runWorkspaceRecordImport(defaultStatus.sourcePath)
+    } catch (error) {
+      toast.error(t('session.workspaceRecordImportFailed'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }, [activeWorkspaceId, buildDefaultWorkspaceImportPath, onRefreshSessions, onRefreshWorkspaces, runWorkspaceRecordImport, t])
+
+  const handleWorkspaceRecordImportManual = React.useCallback(async () => {
+    if (!window.electronAPI || !activeWorkspaceId) return
+
+    const defaultImportPath = buildDefaultWorkspaceImportPath()
+    try {
+      const selectedPath = await window.electronAPI.openFolderDialog({
+        defaultPath: defaultImportPath,
+        title: t('session.workspaceRecordImportSelectTitle'),
+      })
+      if (!selectedPath) return
+      await runWorkspaceRecordImport(selectedPath)
+    } catch (error) {
+      toast.error(t('session.workspaceRecordImportFailed'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }, [activeWorkspaceId, buildDefaultWorkspaceImportPath, runWorkspaceRecordImport, t])
 
   // Send to Workspace dialog state (driven by sendToWorkspaceAtom set from SessionMenu/BatchSessionMenu)
   const sendToWorkspaceIds = useAtomValue(sendToWorkspaceAtom)
@@ -2538,7 +2685,28 @@ function AppShellContent({
                       Shows user-added filters (removable) and pinned filters (non-removable, derived from route).
                       Pinned filters: state views pin a status, label views pin a label, flagged pins the flag. */}
                   {isSessionsNavigation(navState) && (
-                    <DropdownMenu onOpenChange={(open) => { if (!open) { setFilterDropdownQuery(''); setFilterAltHeld(false) } }}>
+                    <>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <HeaderIconButton
+                            icon={<DatabaseZap className="h-4 w-4" />}
+                            tooltip={t('session.workspaceRecordImportAction')}
+                            aria-label={t('session.workspaceRecordImportAction')}
+                            disabled={!activeWorkspaceId || isImportingWorkspaceRecords}
+                          />
+                        </DropdownMenuTrigger>
+                        <StyledDropdownMenuContent align="end" light minWidth="min-w-[220px]">
+                          <StyledDropdownMenuItem onClick={() => void handleWorkspaceRecordImportAuto()}>
+                            <DatabaseZap className="h-3.5 w-3.5" />
+                            <span className="flex-1">{t('session.workspaceRecordImportAutoMode')}</span>
+                          </StyledDropdownMenuItem>
+                          <StyledDropdownMenuItem onClick={() => void handleWorkspaceRecordImportManual()}>
+                            <FolderOpen className="h-3.5 w-3.5" />
+                            <span className="flex-1">{t('session.workspaceRecordImportManualMode')}</span>
+                          </StyledDropdownMenuItem>
+                        </StyledDropdownMenuContent>
+                      </DropdownMenu>
+                      <DropdownMenu onOpenChange={(open) => { if (!open) { setFilterDropdownQuery(''); setFilterAltHeld(false) } }}>
                       <DropdownMenuTrigger asChild>
                         <HeaderIconButton
                           icon={<ListFilter className="h-4 w-4" />}
@@ -3095,6 +3263,7 @@ function AppShellContent({
                         )}
                       </StyledDropdownMenuContent>
                     </DropdownMenu>
+                    </>
                   )}
                   {/* Add Source button (only for sources mode) - uses filter-aware edit config */}
                   {isSourcesNavigation(navState) && activeWorkspace && (

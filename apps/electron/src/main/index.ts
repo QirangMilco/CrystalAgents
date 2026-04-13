@@ -67,8 +67,8 @@ setupI18n()
 const machineId = createHash('sha256').update(hostname() + homedir()).digest('hex').slice(0, 16)
 Sentry.setUser({ id: machineId })
 
-import { join, delimiter } from 'path'
-import { existsSync, readFileSync, cpSync, mkdirSync, readdirSync } from 'fs'
+import { join, delimiter, resolve as resolvePath } from 'path'
+import { existsSync, readFileSync, cpSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
 import { registerAllRpcHandlers } from './handlers/index'
@@ -200,6 +200,15 @@ const variant = getAppVariant()
 const DEFAULT_APP_NAME = process.env.CRAFT_APP_NAME || variant.bundleDisplayName || 'Craft Agents'
 app.setName(DEFAULT_APP_NAME)
 
+const isolatedElectronDataDir = process.env.CRAFT_ELECTRON_USER_DATA_DIR?.trim()
+if (isolatedElectronDataDir) {
+  mkdirSync(isolatedElectronDataDir, { recursive: true })
+  app.setPath('userData', isolatedElectronDataDir)
+  app.setPath('sessionData', join(isolatedElectronDataDir, 'session-data'))
+  app.setPath('logs', join(isolatedElectronDataDir, 'logs'))
+  app.setPath('crashDumps', join(isolatedElectronDataDir, 'crash-dumps'))
+}
+
 // Register as default protocol client for craftagents:// URLs
 // This must be done before app.whenReady() on some platforms
 if (process.defaultApp) {
@@ -298,37 +307,318 @@ if (!gotTheLock) {
   })
 }
 
-function importOfficialConfigOnFirstLaunch(): void {
-  const variantConfig = getAppVariant()
-  if (!variantConfig.import.copyOnFirstLaunch) return
+type ImportEntryDescriptor = {
+  name: string
+  path: string
+  kind: 'file' | 'directory'
+  exists: boolean
+  description: string
+}
 
-  const sourceDirName = variantConfig.import.sourceConfigDirName || '.craft-agent'
-  const sourceConfigDir = join(homedir(), sourceDirName)
-  const targetConfigDir = CONFIG_DIR
+type ImportDetectionResult = {
+  found: boolean
+  sourcePath: string
+  hasConfig: boolean
+  hasWorkspaces: boolean
+  availableEntries: ImportEntryDescriptor[]
+}
 
-  if (sourceConfigDir === targetConfigDir) return
-  if (!existsSync(sourceConfigDir)) return
+type ManualImportResult = {
+  success: boolean
+  sourcePath: string
+  imported: string[]
+  skipped: string[]
+  warnings: string[]
+  error?: string
+  results: Array<{
+    name: string
+    status: 'imported' | 'skipped' | 'missing' | 'failed'
+    detail: string
+  }>
+}
 
-  if (!existsSync(targetConfigDir)) {
-    mkdirSync(targetConfigDir, { recursive: true })
+function getOfficialConfigDirCandidate(explicitPath?: string): string {
+  if (explicitPath && explicitPath.trim()) return explicitPath.trim()
+
+  const variant = getAppVariant()
+  const primary = variant.import.sourceConfigDirName || '.craft-agent'
+  const fallbackNames = ['.crystal-agent', '.craft-agent']
+  const candidateNames = Array.from(new Set([primary, ...fallbackNames]))
+
+  const currentConfigDir = resolvePath(CONFIG_DIR)
+  const candidates = candidateNames
+    .map(name => join(homedir(), name))
+    .filter(path => resolvePath(path) !== currentConfigDir)
+
+  for (const candidate of candidates) {
+    try {
+      if (!existsSync(candidate) || !statSync(candidate).isDirectory()) continue
+      const hasConfig = existsSync(join(candidate, 'config.json'))
+      const hasWorkspaces = existsSync(join(candidate, 'workspaces'))
+      if (hasConfig || hasWorkspaces) return candidate
+    } catch {
+      // Ignore invalid/unreadable candidate and continue
+    }
   }
 
-  const targetEntries = readdirSync(targetConfigDir)
-  if (targetEntries.length > 0) return
+  return candidates[0] || join(homedir(), '.craft-agent')
+}
 
-  const includeEntries = variantConfig.import.include
+function detectOfficialConfigSource(explicitPath?: string): ImportDetectionResult {
+  const sourcePath = getOfficialConfigDirCandidate(explicitPath)
+  const sourceResolved = resolvePath(sourcePath)
+  const currentResolved = resolvePath(CONFIG_DIR)
+  const isCurrentVariantDir = sourceResolved === currentResolved
+
+  const hasRoot = !isCurrentVariantDir && existsSync(sourcePath) && statSync(sourcePath).isDirectory()
+  const hasConfig = hasRoot && existsSync(join(sourcePath, 'config.json'))
+  const hasWorkspaces = hasRoot && existsSync(join(sourcePath, 'workspaces'))
+  const availableEntries: ImportEntryDescriptor[] = [
+    {
+      name: 'config.json',
+      path: join(sourcePath, 'config.json'),
+      kind: 'file',
+      exists: hasConfig,
+      description: isCurrentVariantDir
+        ? 'Source path points to the current variant config directory; choose the official app directory instead'
+        : 'Workspace list and active workspace metadata',
+    },
+    {
+      name: 'workspaces',
+      path: join(sourcePath, 'workspaces'),
+      kind: 'directory',
+      exists: hasWorkspaces,
+      description: isCurrentVariantDir
+        ? 'Source path points to the current variant config directory; choose the official app directory instead'
+        : 'Workspace folders referenced by the global config',
+    },
+  ]
+
+  return {
+    found: hasRoot && (hasConfig || hasWorkspaces),
+    sourcePath,
+    hasConfig,
+    hasWorkspaces,
+    availableEntries,
+  }
+}
+
+function readJsonSafe(path: string): any | null {
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+function mergeConfigJsonFromOfficial(sourcePath: string, targetPath: string): { imported: boolean; warning?: string } {
+  const source = readJsonSafe(sourcePath)
+  if (!source || typeof source !== 'object') {
+    return { imported: false, warning: 'Source config.json is invalid JSON' }
+  }
+
+  if (!existsSync(targetPath)) {
+    cpSync(sourcePath, targetPath, { force: false, errorOnExist: false })
+    return { imported: true }
+  }
+
+  const target = readJsonSafe(targetPath)
+  if (!target || typeof target !== 'object') {
+    return { imported: false, warning: 'Target config.json is invalid JSON' }
+  }
+
+  const sourceWorkspaces = Array.isArray((source as any).workspaces) ? (source as any).workspaces : []
+  const targetWorkspaces = Array.isArray((target as any).workspaces) ? (target as any).workspaces : []
+
+  const hasWorkspace = (candidate: any) => {
+    const candidateId = typeof candidate?.id === 'string' ? candidate.id : null
+    const candidateRootPath = typeof candidate?.rootPath === 'string' ? candidate.rootPath : null
+    return targetWorkspaces.some((w: any) => {
+      if (candidateId && typeof w?.id === 'string' && w.id === candidateId) return true
+      if (candidateRootPath && typeof w?.rootPath === 'string' && w.rootPath === candidateRootPath) return true
+      return false
+    })
+  }
+
+  const merged = [...targetWorkspaces]
+  for (const ws of sourceWorkspaces) {
+    if (!hasWorkspace(ws)) merged.push(ws)
+  }
+
+  const changed = merged.length !== targetWorkspaces.length
+  if (!changed) {
+    return { imported: false }
+  }
+
+  const next = {
+    ...target,
+    workspaces: merged,
+    activeWorkspaceId: (target as any).activeWorkspaceId ?? (source as any).activeWorkspaceId ?? null,
+    activeSessionId: (target as any).activeSessionId ?? null,
+  }
+
+  writeFileSync(targetPath, JSON.stringify(next, null, 2))
+  return { imported: true }
+}
+
+function copyDirectoryChildrenIfMissing(sourceDir: string, targetDir: string): { imported: boolean; warning?: string } {
+  if (!existsSync(sourceDir) || !statSync(sourceDir).isDirectory()) {
+    return { imported: false, warning: `Source directory not found: ${sourceDir}` }
+  }
+
+  if (!existsSync(targetDir)) {
+    cpSync(sourceDir, targetDir, { recursive: true, force: false, errorOnExist: false })
+    return { imported: true }
+  }
+
+  const children = readdirSync(sourceDir)
+  let copiedAny = false
+  for (const name of children) {
+    const src = join(sourceDir, name)
+    const dst = join(targetDir, name)
+    if (existsSync(dst)) continue
+    cpSync(src, dst, { recursive: true, force: false, errorOnExist: false })
+    copiedAny = true
+  }
+
+  return { imported: copiedAny }
+}
+
+function importOfficialConfigManually(args?: { sourcePath?: string; includeEntries?: string[] }): ManualImportResult {
+  const detection = detectOfficialConfigSource(args?.sourcePath)
+  const currentConfigDir = resolvePath(CONFIG_DIR)
+  const sourceResolved = resolvePath(detection.sourcePath)
+
+  if (sourceResolved === currentConfigDir) {
+    return {
+      success: false,
+      sourcePath: detection.sourcePath,
+      imported: [],
+      skipped: ['config.json', 'workspaces'],
+      warnings: ['Source path points to current variant config directory'],
+      results: [
+        {
+          name: 'config.json',
+          status: 'failed',
+          detail: 'Source path is the current variant config directory. Select the official app config directory instead.',
+        },
+        {
+          name: 'workspaces',
+          status: 'failed',
+          detail: 'Source path is the current variant config directory. Select the official app config directory instead.',
+        },
+      ],
+      error: 'Invalid import source: source and target directories are the same.',
+    }
+  }
+
+  if (!detection.found) {
+    return {
+      success: false,
+      sourcePath: detection.sourcePath,
+      imported: [],
+      skipped: [],
+      warnings: [],
+      results: detection.availableEntries.map(entry => ({
+        name: entry.name,
+        status: 'missing' as const,
+        detail: `Not found at ${entry.path}`,
+      })),
+      error: 'Official config directory not found or contains no importable data',
+    }
+  }
+
+  const sourcePath = detection.sourcePath
+  const targetPath = CONFIG_DIR
+  if (!existsSync(targetPath)) mkdirSync(targetPath, { recursive: true })
+
+  const includeEntries = (args?.includeEntries && args.includeEntries.length > 0)
+    ? args.includeEntries
+    : ['config.json', 'workspaces']
+
+  const imported: string[] = []
+  const skipped: string[] = []
+  const warnings: string[] = []
+  const results: ManualImportResult['results'] = []
+
   for (const entry of includeEntries) {
-    const sourcePath = join(sourceConfigDir, entry)
-    const targetPath = join(targetConfigDir, entry)
+    const sourceEntry = join(sourcePath, entry)
+    const targetEntry = join(targetPath, entry)
 
-    if (!existsSync(sourcePath) || existsSync(targetPath)) continue
+    if (!existsSync(sourceEntry)) {
+      skipped.push(entry)
+      const detail = `Source entry is missing: ${sourceEntry}`
+      warnings.push(detail)
+      results.push({ name: entry, status: 'missing', detail })
+      continue
+    }
 
     try {
-      cpSync(sourcePath, targetPath, { recursive: true, force: false, errorOnExist: false })
-      mainLog.info('[VariantImport] Imported entry from official config:', entry)
+      if (entry === 'config.json') {
+        const result = mergeConfigJsonFromOfficial(sourceEntry, targetEntry)
+        if (result.imported) {
+          imported.push(entry)
+          results.push({ name: entry, status: 'imported', detail: 'Merged workspace references from official config.json' })
+        } else {
+          skipped.push(entry)
+          results.push({ name: entry, status: 'skipped', detail: result.warning ?? 'No new workspace references to import' })
+        }
+        if (result.warning) warnings.push(result.warning)
+        continue
+      }
+
+      if (entry === 'workspaces') {
+        const result = copyDirectoryChildrenIfMissing(sourceEntry, targetEntry)
+        if (result.imported) {
+          imported.push(entry)
+          results.push({ name: entry, status: 'imported', detail: 'Copied missing workspace folders into the current variant' })
+        } else {
+          skipped.push(entry)
+          results.push({ name: entry, status: 'skipped', detail: result.warning ?? 'All workspace folders already exist in the current variant' })
+        }
+        if (result.warning) warnings.push(result.warning)
+        continue
+      }
+
+      if (existsSync(targetEntry)) {
+        skipped.push(entry)
+        results.push({ name: entry, status: 'skipped', detail: `Target already exists: ${targetEntry}` })
+        continue
+      }
+
+      cpSync(sourceEntry, targetEntry, { recursive: true, force: false, errorOnExist: false })
+      imported.push(entry)
+      results.push({ name: entry, status: 'imported', detail: `Copied ${entry} into the current variant config directory` })
     } catch (error) {
-      mainLog.warn('[VariantImport] Failed to import entry:', { entry, error })
+      skipped.push(entry)
+      const detail = `Failed to import ${entry}: ${error instanceof Error ? error.message : String(error)}`
+      warnings.push(detail)
+      results.push({ name: entry, status: 'failed', detail })
     }
+  }
+
+  const error = imported.length > 0
+    ? undefined
+    : results.some(result => result.status === 'failed')
+      ? 'Import failed. See itemized results for details.'
+      : 'No new data was imported. All supported items were missing or already present.'
+
+  mainLog.info('[VariantImport] Manual import completed', {
+    sourcePath,
+    imported,
+    skipped,
+    warnings,
+    results,
+  })
+
+  return {
+    success: imported.length > 0,
+    sourcePath,
+    imported,
+    skipped,
+    warnings,
+    results,
+    error,
   }
 }
 
@@ -395,17 +685,20 @@ app.whenReady().then(async () => {
     workspaceDataDirName: startupVariant.workspaceDataDirName,
     sourceConfigDirName: startupVariant.import.sourceConfigDirName,
     copyOnFirstLaunch: startupVariant.import.copyOnFirstLaunch,
+    workspaceDetection: startupVariant.import.workspaceDetection,
+    variantPath: process.env.CRAFT_APP_VARIANT_PATH || 'default',
     configDir: CONFIG_DIR,
     workspaceDataDir: WORKSPACE_DATA_DIR,
+    electronUserDataDir: app.getPath('userData'),
+    electronSessionDataDir: app.getPath('sessionData'),
+    electronLogsDir: app.getPath('logs'),
   })
 
   // Register bundled assets root so all seeding functions can find their files
   // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
   setBundledAssetsRoot(__dirname)
 
-  // Optional one-time import from official ~/.craft-agent to variant CONFIG_DIR.
-  // Runs before docs/themes/permissions seeding so imported user data remains primary.
-  importOfficialConfigOnFirstLaunch()
+  // 官方数据导入改为用户手动触发（设置页按钮），不再在启动阶段自动导入。
 
   // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
   initializeBackendHostRuntime({
@@ -568,6 +861,17 @@ app.whenReady().then(async () => {
       const result = await dialog.showOpenDialog(win, spec)
       return { canceled: result.canceled, filePaths: result.filePaths }
     })
+
+    ipcMain.handle('app:detectOfficialImportSource', async (_event, sourcePath?: string) => {
+      return detectOfficialConfigSource(sourcePath)
+    })
+
+    ipcMain.handle(
+      'app:importOfficialData',
+      async (_event, payload?: { sourcePath?: string; includeEntries?: string[] }) => {
+        return importOfficialConfigManually(payload)
+      },
+    )
 
     if (!isClientOnly) {
       // Restore persisted Git Bash path on Windows (must happen before any SDK subprocess spawn)

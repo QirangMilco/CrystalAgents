@@ -14,10 +14,14 @@
 import { cpSync, copyFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
+const variantPath = process.env.CRAFT_APP_VARIANT_PATH || join('resources', 'app-variant.prod.json');
+
 // Copy all resources (icons, themes, docs, permissions, tool-icons, etc.)
 cpSync('resources', 'dist/resources', { recursive: true });
+copyFileSync(variantPath, join('dist', 'resources', 'app-variant.json'));
 
 console.log('✓ Copied resources/ → dist/resources/');
+console.log(`✓ Selected app variant → dist/resources/app-variant.json (${variantPath})`);
 
 // Copy PowerShell parser script (for Windows command validation in Explore mode)
 // Source: packages/shared/src/agent/powershell-parser.ps1

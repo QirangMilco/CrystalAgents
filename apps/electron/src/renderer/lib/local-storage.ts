@@ -44,6 +44,9 @@ export const KEYS = {
   // TurnCard expansion state (persisted across session switches)
   turnCardExpansion: 'turncard-expansion',
 
+  // Per-session chat scroll snapshot (suffix = sessionId)
+  sessionScrollState: 'session-scroll-state',
+
   // Last selected session (workspace-scoped via suffix)
   lastSelectedSessionId: 'last-selected-session-id',
 

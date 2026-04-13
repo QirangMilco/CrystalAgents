@@ -106,6 +106,7 @@ export interface AppShellContextType {
   // Workspace
   onSelectWorkspace: (id: string, openInNewWindow?: boolean) => void | Promise<void>
   onRefreshWorkspaces?: () => void
+  onRefreshSessions?: () => Promise<void>
 
   // App actions
   onOpenSettings: () => void

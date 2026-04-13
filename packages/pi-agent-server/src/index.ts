@@ -618,6 +618,11 @@ async function ensureSession(): Promise<AgentSession> {
 
   // Set thinking level
   const piThinkingLevel = THINKING_TO_PI[initConfig.thinkingLevel as keyof typeof THINKING_TO_PI];
+  process.env.CRAFT_PI_THINKING_LEVEL = initConfig.thinkingLevel;
+  process.env.CRAFT_PI_THINKING_LEVEL_MAPPED = piThinkingLevel || '';
+  debugLog(
+    `[thinking] init requested=${initConfig.thinkingLevel} mapped=${piThinkingLevel || 'none'} model=${initConfig.model || '-'} apiHint=${process.env.CRAFT_PI_MODEL_API || '-'}`,
+  );
   if (piThinkingLevel) {
     sessionOptions.thinkingLevel = piThinkingLevel;
   }
@@ -1507,6 +1512,8 @@ async function handleSetThinkingLevel(msg: Extract<InboundMessage, { type: 'set_
 
   try {
     piSession.setThinkingLevel(piLevel);
+    process.env.CRAFT_PI_THINKING_LEVEL = msg.level;
+    process.env.CRAFT_PI_THINKING_LEVEL_MAPPED = piLevel;
     debugLog(`[set_thinking_level] Thinking level changed to: ${msg.level} (mapped: ${piLevel})`);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

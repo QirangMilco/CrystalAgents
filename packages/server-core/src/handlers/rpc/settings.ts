@@ -12,6 +12,10 @@ import { isValidWorkingDirectory } from '../../utils/path-validation'
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.workspace.SETTINGS_GET,
   RPC_CHANNELS.workspace.SETTINGS_UPDATE,
+  RPC_CHANNELS.workspace.LEGACY_STATUS_GET,
+  RPC_CHANNELS.workspace.LEGACY_MIGRATE,
+  RPC_CHANNELS.workspace.RECORD_IMPORT_STATUS_GET,
+  RPC_CHANNELS.workspace.RECORD_IMPORT_RUN,
   RPC_CHANNELS.preferences.READ,
   RPC_CHANNELS.preferences.WRITE,
   RPC_CHANNELS.drafts.GET,
@@ -77,10 +81,11 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Open native folder dialog for selecting working directory (routed to client)
-  server.handle(RPC_CHANNELS.dialog.OPEN_FOLDER, async (ctx) => {
+  server.handle(RPC_CHANNELS.dialog.OPEN_FOLDER, async (ctx, options?: { defaultPath?: string; title?: string }) => {
     const result = await requestClientOpenFileDialog(server, ctx.clientId, {
       properties: ['openDirectory', 'createDirectory'],
-      title: 'Select Working Directory',
+      title: options?.title || 'Select Working Directory',
+      defaultPath: options?.defaultPath,
     })
     return result.canceled ? null : result.filePaths[0]
   })
@@ -164,6 +169,72 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     // Save the config
     saveWorkspaceConfig(workspace.rootPath, config)
     deps.platform.logger.info(`Workspace setting updated: ${key} = ${JSON.stringify(normalizedValue)}`)
+  })
+
+  server.handle(RPC_CHANNELS.workspace.LEGACY_STATUS_GET, async (_ctx, workspaceId: string) => {
+    const workspace = getWorkspaceOrThrow(workspaceId)
+    const { detectLegacyWorkspaceData } = await import('@craft-agent/shared/workspaces')
+    return detectLegacyWorkspaceData(workspace.rootPath)
+  })
+
+  server.handle(RPC_CHANNELS.workspace.LEGACY_MIGRATE, async (_ctx, workspaceId: string) => {
+    const workspace = getWorkspaceOrThrow(workspaceId)
+    const { detectLegacyWorkspaceData, importWorkspaceRecordDataFromWorkspaceRoot } = await import('@craft-agent/shared/workspaces')
+    const before = detectLegacyWorkspaceData(workspace.rootPath)
+
+    if (!before.hasLegacyData) {
+      return {
+        hasLegacyData: false,
+        migrated: false,
+        detectedEntries: 0,
+        imported: 0,
+        skipped: 0,
+        failed: 0,
+      }
+    }
+
+    const result = importWorkspaceRecordDataFromWorkspaceRoot(workspace.rootPath)
+    const importedCount = result.results.filter((entry) => entry.status === 'imported').length
+    const skippedCount = result.results.filter((entry) => entry.status === 'skipped').length
+    const failedCount = result.results.filter((entry) => entry.status === 'failed').length
+
+    if (importedCount > 0) {
+      const sessionManagerWithReload = deps.sessionManager as typeof deps.sessionManager & { reloadSessions?: () => void }
+      sessionManagerWithReload.reloadSessions?.()
+    }
+
+    return {
+      hasLegacyData: true,
+      migrated: importedCount > 0,
+      detectedEntries: before.detectedEntries.length,
+      imported: importedCount,
+      skipped: skippedCount,
+      failed: failedCount,
+      results: result.results,
+      warnings: result.warnings,
+    }
+  })
+
+  server.handle(RPC_CHANNELS.workspace.RECORD_IMPORT_STATUS_GET, async (_ctx, workspaceId: string, sourcePath?: string) => {
+    const workspace = getWorkspaceOrThrow(workspaceId)
+    const { detectLegacyWorkspaceData, detectWorkspaceRecordImportStatus } = await import('@craft-agent/shared/workspaces')
+
+    const legacy = detectLegacyWorkspaceData(workspace.rootPath)
+    const effectiveSourcePath = sourcePath?.trim() || legacy.officialDataDir
+    return detectWorkspaceRecordImportStatus(workspace.rootPath, effectiveSourcePath)
+  })
+
+  server.handle(RPC_CHANNELS.workspace.RECORD_IMPORT_RUN, async (_ctx, workspaceId: string, sourcePath: string) => {
+    const workspace = getWorkspaceOrThrow(workspaceId)
+    const { importWorkspaceRecordDataFromSource } = await import('@craft-agent/shared/workspaces')
+    const result = importWorkspaceRecordDataFromSource(workspace.rootPath, sourcePath)
+
+    if (result.imported.length > 0) {
+      const sessionManagerWithReload = deps.sessionManager as typeof deps.sessionManager & { reloadSessions?: () => void }
+      sessionManagerWithReload.reloadSessions?.()
+    }
+
+    return result
   })
 
   // ============================================================

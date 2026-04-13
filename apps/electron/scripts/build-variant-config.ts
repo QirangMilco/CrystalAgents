@@ -10,7 +10,8 @@ interface AppVariantConfig {
 
 const ROOT = process.cwd();
 const ELECTRON_DIR = join(ROOT, 'apps', 'electron');
-const resourcesVariantPath = join(ELECTRON_DIR, 'resources', 'app-variant.json');
+const defaultVariantPath = join(ELECTRON_DIR, 'resources', 'app-variant.prod.json');
+const resourcesVariantPath = process.env.CRAFT_APP_VARIANT_PATH || defaultVariantPath;
 const baseBuilderPath = join(ELECTRON_DIR, 'electron-builder.yml');
 const outDir = join(ELECTRON_DIR, 'dist');
 const outBuilderPath = join(outDir, 'electron-builder.generated.yml');

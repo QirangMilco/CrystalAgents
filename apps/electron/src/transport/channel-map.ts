@@ -172,6 +172,10 @@ export const CHANNEL_MAP = {
   // Workspace Settings
   getWorkspaceSettings: invoke(RPC_CHANNELS.workspace.SETTINGS_GET),
   updateWorkspaceSetting: invoke(RPC_CHANNELS.workspace.SETTINGS_UPDATE),
+  getWorkspaceLegacyStatus: invoke(RPC_CHANNELS.workspace.LEGACY_STATUS_GET),
+  migrateWorkspaceLegacyData: invoke(RPC_CHANNELS.workspace.LEGACY_MIGRATE),
+  getWorkspaceRecordImportStatus: invoke(RPC_CHANNELS.workspace.RECORD_IMPORT_STATUS_GET),
+  importWorkspaceRecordData: invoke(RPC_CHANNELS.workspace.RECORD_IMPORT_RUN),
 
   // Folder dialog
   openFolderDialog: invoke(RPC_CHANNELS.dialog.OPEN_FOLDER),

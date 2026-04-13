@@ -407,6 +407,13 @@ client.onConnectionStateChanged((state) => {
 ;(api as ElectronAPI).invokeOnServer = (url: string, token: string, channel: string, ...args: any[]) =>
   ipcRenderer.invoke('server:invokeOnServer', url, token, channel, ...args)
 
+// Manual import from official Craft Agents config directory (user-triggered only)
+;(api as ElectronAPI).detectOfficialImportSource = (sourcePath?: string) =>
+  ipcRenderer.invoke('app:detectOfficialImportSource', sourcePath)
+
+;(api as ElectronAPI).importOfficialData = (payload?: { sourcePath?: string; includeEntries?: string[] }) =>
+  ipcRenderer.invoke('app:importOfficialData', payload)
+
 // System warnings — expose env-based flags set during main process startup
 // (preload-only: reads env var directly, no IPC round-trip needed)
 ;(api as ElectronAPI).getSystemWarnings = async () => ({

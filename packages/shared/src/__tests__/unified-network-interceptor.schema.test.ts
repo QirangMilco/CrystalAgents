@@ -6,12 +6,13 @@ import { homedir } from 'node:os';
 let injectMetadataIntoToolSchema: typeof import('../unified-network-interceptor.ts').injectMetadataIntoToolSchema;
 let sanitizeEmptyTextCacheControl: typeof import('../unified-network-interceptor.ts').sanitizeEmptyTextCacheControl;
 let upgradePromptCacheTtl: typeof import('../unified-network-interceptor.ts').upgradePromptCacheTtl;
+let applyOpenAiResponsesExecutionDefaults: typeof import('../unified-network-interceptor.ts').applyOpenAiResponsesExecutionDefaults;
 let _resetConfigCacheForTesting: typeof import('../interceptor-common.ts')._resetConfigCacheForTesting;
 
 describe('unified-network-interceptor schema metadata injection', () => {
   beforeAll(async () => {
     process.env.CRAFT_INTERCEPTOR_DISABLE_AUTO_INSTALL = '1';
-    ({ injectMetadataIntoToolSchema, sanitizeEmptyTextCacheControl, upgradePromptCacheTtl } = await import('../unified-network-interceptor.ts'));
+    ({ injectMetadataIntoToolSchema, sanitizeEmptyTextCacheControl, upgradePromptCacheTtl, applyOpenAiResponsesExecutionDefaults } = await import('../unified-network-interceptor.ts'));
     ({ _resetConfigCacheForTesting } = await import('../interceptor-common.ts'));
   });
 
@@ -54,6 +55,43 @@ describe('unified-network-interceptor schema metadata injection', () => {
     expect(result.required).toEqual(['_displayName', '_intent']);
     expect(result.properties._displayName).toEqual({ type: 'string', description: 'custom display name schema' });
     expect(result.properties._intent).toEqual({ type: 'string', description: 'custom intent schema' });
+  });
+});
+
+describe('applyOpenAiResponsesExecutionDefaults', () => {
+  it('在存在工具时补齐 tool_choice 与 parallel_tool_calls 默认值', () => {
+    const body = {
+      model: 'gpt-5.4',
+      tools: [{ type: 'function', name: 'read', parameters: { type: 'object', properties: {} } }],
+    } as Record<string, unknown>;
+
+    applyOpenAiResponsesExecutionDefaults(body);
+
+    expect(body.tool_choice).toBe('auto');
+    expect(body.parallel_tool_calls).toBe(true);
+  });
+
+  it('不覆盖调用方已显式设置的执行参数', () => {
+    const body = {
+      model: 'gpt-5.4',
+      tools: [{ type: 'function', name: 'read', parameters: { type: 'object', properties: {} } }],
+      tool_choice: 'required',
+      parallel_tool_calls: false,
+    } as Record<string, unknown>;
+
+    applyOpenAiResponsesExecutionDefaults(body);
+
+    expect(body.tool_choice).toBe('required');
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it('无工具场景不注入执行参数', () => {
+    const body = { model: 'gpt-5.4' } as Record<string, unknown>;
+
+    applyOpenAiResponsesExecutionDefaults(body);
+
+    expect(body.tool_choice).toBeUndefined();
+    expect(body.parallel_tool_calls).toBeUndefined();
   });
 });
 

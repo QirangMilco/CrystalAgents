@@ -244,6 +244,10 @@ export const RPC_CHANNELS = {
     WRITE_IMAGE: 'workspace:writeImage',
     SETTINGS_GET: 'workspaceSettings:get',
     SETTINGS_UPDATE: 'workspaceSettings:update',
+    LEGACY_STATUS_GET: 'workspaceLegacy:getStatus',
+    LEGACY_MIGRATE: 'workspaceLegacy:migrate',
+    RECORD_IMPORT_STATUS_GET: 'workspaceRecordImport:getStatus',
+    RECORD_IMPORT_RUN: 'workspaceRecordImport:run',
   },
   permissions: {
     GET_DEFAULTS: 'permissions:getDefaults',

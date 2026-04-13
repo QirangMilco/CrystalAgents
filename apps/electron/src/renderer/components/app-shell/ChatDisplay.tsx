@@ -10,12 +10,14 @@ import {
   CircleAlert,
   ExternalLink,
   Info,
+  Search,
   X,
 } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 import { toast } from "sonner"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { Markdown, CollapsibleMarkdownProvider, StreamingMarkdown, type RenderMode } from "@/components/markdown"
 import { AnimatedCollapsibleContent } from "@/components/ui/collapsible"
@@ -73,6 +75,7 @@ import { navigate, routes } from "@/lib/navigate"
 import { CHAT_LAYOUT } from "@/config/layout"
 import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } from "@/lib/file-changes"
 import { resolveBranchNewPanelOption } from "./branching"
+import * as storage from "@/lib/local-storage"
 
 // ============================================================================
 // CSS Custom Highlight API helper
@@ -231,6 +234,22 @@ type PendingFollowUpAnnotation = {
   createdAt: number
   color?: string
   meta?: Record<string, unknown>
+}
+
+type ChatScrollSnapshot = {
+  scrollTop: number
+  visibleTurnCount: number
+  stickToBottom: boolean
+  savedAt: number
+}
+
+type ChatSearchResult = {
+  matchId: string
+  turnId: string
+  turnIndex: number
+  matchIndexInTurn: number
+  role: 'user' | 'assistant' | 'system' | 'auth-request'
+  excerpt: string
 }
 
 function normalizeExcerptForMessage(text: string, maxLength = 280): string {
@@ -621,7 +640,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // ============================================================================
   // Current match index for navigation (internal state, exposed via ref)
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
+  const [isInlineSearchOpen, setInlineSearchOpen] = useState(false)
+  const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false)
   const turnRefs = React.useRef<Map<string, HTMLDivElement>>(new Map())
+  const pendingRestoreScrollTopRef = React.useRef<number | null>(null)
   // Inject ::highlight() styles at runtime to avoid LightningCSS build warnings
   // (the optimizer doesn't recognize ::highlight as a valid pseudo-element yet)
   React.useEffect(() => {
@@ -640,9 +662,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const shouldScrollToMatchRef = React.useRef(false)
   const prevSessionIdForScrollRef = React.useRef<string | null>(null)
 
-  // Use the external search query from props
-  const searchQuery = externalSearchQuery || ''
-  // Require 2+ characters to activate in-chat search (aligned with session list isSearchMode)
+  // Use the external search query from props; fall back to local in-chat query.
+  const [internalSearchQuery, setInternalSearchQuery] = useState('')
+  const effectiveSearchQuery = (externalSearchQuery && externalSearchQuery.trim().length >= 2)
+    ? externalSearchQuery
+    : internalSearchQuery
+  const searchQuery = effectiveSearchQuery
+  // Require 2+ characters to activate in-chat search
   const isSearchActive = searchQuery.trim().length >= 2
 
   // Focus textarea when zone gains focus via keyboard (Tab, Cmd+3, ArrowRight)
@@ -707,22 +733,35 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Find ALL individual match occurrences (not just turns)
   // Returns array with unique matchId for each occurrence
-  const matchingOccurrences = useMemo(() => {
+  const matchingOccurrences = useMemo<ChatSearchResult[]>(() => {
     if (!searchQuery.trim() || !session?.messages) return []
-    const startTime = performance.now()
     const query = searchQuery.toLowerCase()
     const turns = groupMessagesByTurn(session.messages)
-    const matches: { matchId: string; turnId: string; turnIndex: number; matchIndexInTurn: number }[] = []
+    const matches: ChatSearchResult[] = []
+
+    const makeExcerpt = (text: string): string => {
+      const normalized = text.replace(/\s+/g, ' ').trim()
+      if (!normalized) return ''
+      const idx = normalized.toLowerCase().indexOf(query)
+      if (idx < 0) return normalized.slice(0, 140)
+      const start = Math.max(0, idx - 36)
+      const end = Math.min(normalized.length, idx + query.length + 72)
+      const prefix = start > 0 ? '…' : ''
+      const suffix = end < normalized.length ? '…' : ''
+      return `${prefix}${normalized.slice(start, end)}${suffix}`
+    }
 
     for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
       const turn = turns[turnIndex]
       let textContent = ''
       let turnId = ''
+      let role: ChatSearchResult['role'] = 'assistant'
 
       // Use getTurnKey() for consistent IDs between text scan and DOM refs
       turnId = getTurnKey(turn)
 
       if (turn.type === 'user') {
+        role = 'user'
         const content = turn.message.content as unknown
         if (typeof content === 'string') {
           textContent = content
@@ -733,11 +772,16 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             .join('\n')
         }
       } else if (turn.type === 'assistant') {
+        role = 'assistant'
         if (turn.response?.text) {
           textContent = turn.response.text
         }
       } else if (turn.type === 'system') {
+        role = 'system'
         textContent = turn.message.content
+      } else if (turn.type === 'auth-request') {
+        role = 'auth-request'
+        textContent = turn.message.content || ''
       }
 
       // Count occurrences in this turn's text content
@@ -748,6 +792,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           turnId,
           turnIndex,
           matchIndexInTurn: i,
+          role,
+          excerpt: makeExcerpt(textContent),
         })
       }
     }
@@ -783,6 +829,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // With CSS Custom Highlight API, navigation is driven by logical matches — no DOM verification needed.
   const validMatches = matchingOccurrences
+
+  const jumpToMatch = useCallback((targetIndex: number) => {
+    if (targetIndex < 0 || targetIndex >= validMatches.length) return
+    shouldScrollToMatchRef.current = true
+    setCurrentMatchIndex(targetIndex)
+  }, [validMatches])
 
   // Auto-scroll to match ONLY when there's exactly one match
   // Multiple matches: user navigates with chevrons to avoid jarring scroll
@@ -975,7 +1027,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const goToNextMatch = useCallback(() => {
     if (validMatches.length === 0) return
     setCurrentMatchIndex(prev => {
-      // Don't loop - stop at last match
       if (prev >= validMatches.length - 1) return prev
       shouldScrollToMatchRef.current = true
       return prev + 1
@@ -986,7 +1037,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const goToPrevMatch = useCallback(() => {
     if (validMatches.length === 0) return
     setCurrentMatchIndex(prev => {
-      // Don't loop - stop at first match
       if (prev <= 0) return prev
       shouldScrollToMatchRef.current = true
       return prev - 1
@@ -1181,6 +1231,80 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return () => viewport.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
+  // Persist per-session scroll snapshot
+  React.useEffect(() => {
+    if (!session?.id) return
+    const viewport = scrollViewportRef.current
+    if (!viewport) return
+
+    let saveTimer: ReturnType<typeof setTimeout> | null = null
+    const saveSnapshot = () => {
+      const snapshot: ChatScrollSnapshot = {
+        scrollTop: viewport.scrollTop,
+        visibleTurnCount,
+        stickToBottom: isStickToBottomRef.current,
+        savedAt: Date.now(),
+      }
+      storage.set(storage.KEYS.sessionScrollState, snapshot, session.id)
+    }
+
+    const handleViewportScroll = () => {
+      if (saveTimer) clearTimeout(saveTimer)
+      saveTimer = setTimeout(saveSnapshot, 120)
+    }
+
+    viewport.addEventListener('scroll', handleViewportScroll)
+
+    return () => {
+      if (saveTimer) clearTimeout(saveTimer)
+      saveSnapshot()
+      viewport.removeEventListener('scroll', handleViewportScroll)
+    }
+  }, [session?.id, visibleTurnCount])
+
+  const hasSavedSnapshotForSession = React.useMemo(() => {
+    if (!session?.id) return false
+    const snapshot = storage.get<ChatScrollSnapshot | null>(storage.KEYS.sessionScrollState, null, session.id)
+    return !!snapshot
+  }, [session?.id])
+
+  // On session change, load per-session snapshot if available
+  React.useEffect(() => {
+    const sessionId = session?.id
+    if (!sessionId) return
+
+    const snapshot = storage.get<ChatScrollSnapshot | null>(storage.KEYS.sessionScrollState, null, sessionId)
+    if (!snapshot) {
+      setShouldRestoreScroll(false)
+      pendingRestoreScrollTopRef.current = null
+      return
+    }
+
+    pendingRestoreScrollTopRef.current = Math.max(0, snapshot.scrollTop)
+    isStickToBottomRef.current = snapshot.stickToBottom
+    if (snapshot.visibleTurnCount > visibleTurnCount) {
+      setVisibleTurnCount(snapshot.visibleTurnCount)
+    }
+    setShouldRestoreScroll(true)
+  }, [session?.id])
+
+  // Restore saved scrollTop after messages are mounted
+  React.useEffect(() => {
+    if (!shouldRestoreScroll) return
+    const viewport = scrollViewportRef.current
+    const targetScrollTop = pendingRestoreScrollTopRef.current
+    if (!viewport || targetScrollTop == null) return
+
+    const applyRestore = () => {
+      viewport.scrollTop = targetScrollTop
+      pendingRestoreScrollTopRef.current = null
+      setShouldRestoreScroll(false)
+      skipSmoothScrollUntilRef.current = Date.now() + 500
+    }
+
+    requestAnimationFrame(() => requestAnimationFrame(applyRestore))
+  }, [shouldRestoreScroll, session?.messages?.length, visibleTurnCount])
+
   // Auto-scroll using ResizeObserver for streaming content
   // Initial scroll is handled by ScrollOnMount (useLayoutEffect, before paint)
   React.useEffect(() => {
@@ -1190,10 +1314,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     const isSessionSwitch = prevSessionIdRef.current !== session?.id
     prevSessionIdRef.current = session?.id ?? null
 
-    // On session switch: reset UI state (scroll handled by ScrollOnMount)
+    // On session switch: reset UI state unless we are restoring a saved scroll snapshot
     if (isSessionSwitch) {
-      isStickToBottomRef.current = true
-      setVisibleTurnCount(TURNS_PER_PAGE)
+      if (!pendingRestoreScrollTopRef.current) {
+        isStickToBottomRef.current = true
+        setVisibleTurnCount(TURNS_PER_PAGE)
+      }
     }
 
     // Debounced scroll for streaming - waits for layout to settle
@@ -1513,10 +1639,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     scrollToFollowUpTurn(item)
   }, [scrollToFollowUpTurn])
 
-  // Compute if we should skip scroll-to-bottom (when search is active on session switch)
-  // At render time, prevSessionIdForScrollRef still has the OLD session ID, so we can detect the switch
+  // Compute if we should skip initial scroll-to-bottom.
+  // Cases: active search on session switch, or explicit scroll restoration.
   const isSessionSwitchForScroll = prevSessionIdForScrollRef.current !== null && prevSessionIdForScrollRef.current !== session?.id
-  const skipScrollToBottom = isSessionSwitchForScroll && isSearchActive
+  const skipScrollToBottom = (isSessionSwitchForScroll && isSearchActive) || shouldRestoreScroll || hasSavedSnapshotForSession
 
   return (
     <div ref={zoneRef} className="flex h-full flex-col min-w-0" data-focus-zone="chat">
@@ -1526,6 +1652,85 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           <div className="flex flex-1 flex-col min-h-0 min-w-0 relative z-10">
           {/* === MESSAGES AREA: Scrollable list of message bubbles === */}
           <div className="relative flex-1 min-h-0">
+            {!compactMode && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 w-[min(760px,calc(100%-24px))]">
+                <div className="rounded-lg border bg-background/95 backdrop-blur-sm shadow-sm p-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setInlineSearchOpen(prev => !prev)}
+                      className="inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border hover:bg-muted/60"
+                      aria-label={t('chat.searchToggleAria')}
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      <span>{t('chat.searchInSession')}</span>
+                    </button>
+                    <span className="text-xs text-muted-foreground">
+                      {isSearchActive ? t('chat.searchMatches', { count: validMatches.length }) : t('chat.searchAtLeastTwoChars')}
+                    </span>
+                    {isSearchActive && (
+                      <div className="ml-auto flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center rounded-md border p-1.5 hover:bg-muted/60 disabled:opacity-40"
+                          onClick={goToPrevMatch}
+                          disabled={currentMatchIndex <= 0}
+                          aria-label={t('chat.searchPrevMatchAria')}
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center rounded-md border p-1.5 hover:bg-muted/60 disabled:opacity-40"
+                          onClick={goToNextMatch}
+                          disabled={currentMatchIndex >= Math.max(0, validMatches.length - 1)}
+                          aria-label={t('chat.searchNextMatchAria')}
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {isInlineSearchOpen && (
+                    <div className="mt-2 space-y-2">
+                      <Input
+                        value={internalSearchQuery}
+                        onChange={(e) => setInternalSearchQuery(e.target.value)}
+                        placeholder={t('chat.searchCurrentSessionPlaceholder')}
+                        className="h-8"
+                      />
+
+                      {isSearchActive && validMatches.length > 0 && (
+                        <div className="max-h-44 overflow-y-auto pr-1 space-y-1">
+                          {validMatches.slice(0, 50).map((match, idx) => (
+                            <button
+                              key={match.matchId}
+                              type="button"
+                              onClick={() => jumpToMatch(idx)}
+                              className={cn(
+                                "w-full text-left rounded-md px-2 py-1.5 border text-xs hover:bg-muted/60",
+                                idx === currentMatchIndex && "border-info bg-info/10"
+                              )}
+                            >
+                              <div className="font-medium text-[11px] text-muted-foreground mb-0.5">
+                                {t(`chat.searchRole.${match.role === 'auth-request' ? 'authRequest' : match.role}`)} · #{match.turnIndex + 1}
+                              </div>
+                              <div className="truncate">{match.excerpt || t('chat.searchEmptyContent')}</div>
+                            </button>
+                          ))}
+                          {validMatches.length > 50 && (
+                            <div className="text-[11px] text-muted-foreground px-1 py-0.5">
+                              {t('chat.searchShowTopResults', { count: 50 })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             {/* Mask wrapper - fades content at top and bottom over transparent/image backgrounds */}
             <div
               className="h-full"
@@ -1598,7 +1803,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                   {turns.map((turn, index) => {
                     // Compute turn key and check if it's a search match
                     const turnKey = getTurnKey(turn)
-                    const isCurrentMatch = isSearchActive && matchingTurnIds[currentMatchIndex] === turnKey
+                    const isCurrentMatch = isSearchActive && validMatches[currentMatchIndex]?.turnId === turnKey
                     const isAnyMatch = isSearchActive && matchingTurnIds.includes(turnKey)
 
                     // User turns - render with MemoizedMessageBubble

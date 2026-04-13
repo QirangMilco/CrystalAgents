@@ -207,6 +207,7 @@ export function SessionList({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroupsForScope(collapseScopeSuffix))
   const collapseScopeRef = useRef(collapseScopeSuffix)
 
+
   useEffect(() => {
     if (collapseScopeRef.current === collapseScopeSuffix) return
     setCollapsedGroups(readCollapsedGroupsForScope(collapseScopeSuffix))

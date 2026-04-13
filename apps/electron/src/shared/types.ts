@@ -244,6 +244,34 @@ export interface ElectronAPI {
   removeWorkspace(workspaceId: string): Promise<boolean>
   invokeOnServer(url: string, token: string, channel: string, ...args: any[]): Promise<any>
 
+  // Manual import from official Craft Agents config (user-triggered)
+  detectOfficialImportSource(sourcePath?: string): Promise<{
+    found: boolean
+    sourcePath: string
+    hasConfig: boolean
+    hasWorkspaces: boolean
+    availableEntries: Array<{
+      name: string
+      path: string
+      kind: 'file' | 'directory'
+      exists: boolean
+      description: string
+    }>
+  }>
+  importOfficialData(payload?: { sourcePath?: string; includeEntries?: string[] }): Promise<{
+    success: boolean
+    sourcePath: string
+    imported: string[]
+    skipped: string[]
+    warnings: string[]
+    error?: string
+    results: Array<{
+      name: string
+      status: 'imported' | 'skipped' | 'missing' | 'failed'
+      detail: string
+    }>
+  }>
+
   // Session export/import (cross-workspace transfer)
   exportSession(sessionId: string): Promise<unknown>
   importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork'): Promise<{ sessionId: string; warnings?: string[] }>
@@ -417,9 +445,64 @@ export interface ElectronAPI {
   // Workspace Settings (per-workspace configuration)
   getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettings | null>
   updateWorkspaceSetting<K extends keyof WorkspaceSettings>(workspaceId: string, key: K, value: WorkspaceSettings[K]): Promise<void>
+  getWorkspaceLegacyStatus(workspaceId: string): Promise<{
+    hasLegacyData: boolean
+    officialDataDir: string
+    workspaceDataDir: string
+    detectedEntries: Array<{
+      name: string
+      sourcePath: string
+      targetPath: string
+      kind: 'official-dir' | 'official-file' | 'legacy-dir' | 'legacy-file'
+      targetExists: boolean
+    }>
+  }>
+  migrateWorkspaceLegacyData(workspaceId: string): Promise<{
+    hasLegacyData: boolean
+    migrated: boolean
+    detectedEntries: number
+    imported?: number
+    skipped?: number
+    failed?: number
+    results?: Array<{
+      name: string
+      status: 'imported' | 'skipped' | 'missing' | 'failed'
+      detail: string
+    }>
+    warnings?: string[]
+  }>
+  getWorkspaceRecordImportStatus(workspaceId: string, sourcePath?: string): Promise<{
+    sourcePath: string
+    workspaceDataDir: string
+    sourceExists: boolean
+    sourceIsDirectory: boolean
+    hasImportableData: boolean
+    availableEntries: Array<{
+      name: string
+      sourcePath: string
+      targetPath: string
+      kind: 'dir' | 'file'
+      targetExists: boolean
+    }>
+    missingEntries: string[]
+    message?: string
+  }>
+  importWorkspaceRecordData(workspaceId: string, sourcePath: string): Promise<{
+    sourcePath: string
+    workspaceDataDir: string
+    imported: string[]
+    skipped: string[]
+    warnings: string[]
+    results: Array<{
+      name: string
+      status: 'imported' | 'skipped' | 'missing' | 'failed'
+      detail: string
+    }>
+    hasImportableData: boolean
+  }>
 
   // Folder dialog
-  openFolderDialog(): Promise<string | null>
+  openFolderDialog(options?: { defaultPath?: string; title?: string }): Promise<string | null>
 
   // User Preferences
   readPreferences(): Promise<{ content: string; exists: boolean; path: string }>

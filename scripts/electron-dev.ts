@@ -79,6 +79,8 @@ function detectInstance(): void {
     process.env.CRAFT_APP_NAME = `Craft Agents [${instanceNum}]`;
     process.env.CRAFT_CONFIG_DIR = join(process.env.HOME || "", `.craft-agent-${instanceNum}`);
     process.env.CRAFT_DEEPLINK_SCHEME = `craftagents${instanceNum}`;
+    process.env.CRAFT_APP_VARIANT_PATH = join(ROOT_DIR, 'apps', 'electron', 'resources', 'app-variant.dev.json');
+    process.env.CRAFT_ELECTRON_USER_DATA_DIR = join(process.env.CRAFT_CONFIG_DIR, 'electron');
     console.log(`🔢 Instance ${instanceNum} detected: port=${process.env.CRAFT_VITE_PORT}, config=${process.env.CRAFT_CONFIG_DIR}`);
   }
 }
@@ -259,6 +261,8 @@ function getElectronEnv(): Record<string, string> {
     CRAFT_APP_NAME: process.env.CRAFT_APP_NAME || "Craft Agents",
     CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || "craftagents",
     CRAFT_INSTANCE_NUMBER: process.env.CRAFT_INSTANCE_NUMBER || "",
+    CRAFT_APP_VARIANT_PATH: process.env.CRAFT_APP_VARIANT_PATH || join(ROOT_DIR, 'apps', 'electron', 'resources', 'app-variant.dev.json'),
+    CRAFT_ELECTRON_USER_DATA_DIR: process.env.CRAFT_ELECTRON_USER_DATA_DIR || join(process.env.CRAFT_CONFIG_DIR || join(process.env.HOME || '', '.craft-agent-dev'), 'electron'),
   };
 }
 

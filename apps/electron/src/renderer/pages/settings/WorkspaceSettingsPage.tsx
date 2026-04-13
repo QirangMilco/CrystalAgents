@@ -66,6 +66,20 @@ export default function WorkspaceSettingsPage() {
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
+  const [legacyStatus, setLegacyStatus] = useState<{
+    hasLegacyData: boolean
+    officialDataDir: string
+    workspaceDataDir: string
+    detectedEntries: Array<{
+      name: string
+      sourcePath: string
+      targetPath: string
+      kind: 'official-dir' | 'official-file' | 'legacy-dir' | 'legacy-file'
+      targetExists: boolean
+    }>
+  } | null>(null)
+  const [isRefreshingLegacy, setIsRefreshingLegacy] = useState(false)
+  const [isMigratingLegacy, setIsMigratingLegacy] = useState(false)
 
   // Default sources state
   const [availableSources, setAvailableSources] = useState<LoadedSource[]>([])
@@ -74,6 +88,22 @@ export default function WorkspaceSettingsPage() {
   // Mode cycling state
   const [enabledModes, setEnabledModes] = useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
   const [modeCyclingError, setModeCyclingError] = useState<string | null>(null)
+
+  const loadLegacyStatus = useCallback(async () => {
+    if (!window.electronAPI || !activeWorkspaceId) {
+      setLegacyStatus(null)
+      return
+    }
+    setIsRefreshingLegacy(true)
+    try {
+      const status = await window.electronAPI.getWorkspaceLegacyStatus(activeWorkspaceId)
+      setLegacyStatus(status)
+    } catch (error) {
+      console.error('Failed to load workspace legacy status:', error)
+    } finally {
+      setIsRefreshingLegacy(false)
+    }
+  }, [activeWorkspaceId])
 
   // Load workspace settings when active workspace changes
   useEffect(() => {
@@ -146,7 +176,8 @@ export default function WorkspaceSettingsPage() {
     }
 
     loadWorkspaceSettings()
-  }, [activeWorkspaceId])
+    void loadLegacyStatus()
+  }, [activeWorkspaceId, loadLegacyStatus])
 
   // Subscribe to live source changes (additions/removals)
   useEffect(() => {
@@ -281,6 +312,31 @@ export default function WorkspaceSettingsPage() {
     },
     [updateWorkspaceSetting]
   )
+
+  const handleLegacyMigrate = useCallback(async () => {
+    if (!window.electronAPI || !activeWorkspaceId || !legacyStatus?.hasLegacyData) return
+    const confirmed = window.confirm(t('settings.workspace.legacyDetectedDesc', {
+      count: legacyStatus.detectedEntries.length,
+      target: legacyStatus.workspaceDataDir,
+    }))
+    if (!confirmed) return
+
+    setIsMigratingLegacy(true)
+    try {
+      const result = await window.electronAPI.migrateWorkspaceLegacyData(activeWorkspaceId)
+      if (result.migrated) {
+        toast.success(t('settings.workspace.legacyMigrated'), {
+          description: t('settings.workspace.legacyMigratedDesc', { count: result.detectedEntries }),
+        })
+      }
+      await loadLegacyStatus()
+      onRefreshWorkspaces?.()
+    } catch (error) {
+      console.error('Failed to migrate legacy workspace data:', error)
+    } finally {
+      setIsMigratingLegacy(false)
+    }
+  }, [activeWorkspaceId, legacyStatus, loadLegacyStatus, onRefreshWorkspaces, t])
 
   const handleSourceToggle = useCallback(
     async (slug: string, checked: boolean) => {
@@ -510,6 +566,43 @@ export default function WorkspaceSettingsPage() {
               ) : (
                 <p className="text-sm text-muted-foreground">{t("settings.workspace.noSourcesConfigured")}</p>
               )}
+            </SettingsSection>
+
+            <SettingsSection
+              title={t("settings.workspace.legacyData")}
+              description={t("settings.workspace.legacyDataDesc")}
+            >
+              <SettingsCard>
+                <SettingsRow
+                  label={legacyStatus?.hasLegacyData ? t("settings.workspace.legacyDetected") : t("settings.workspace.legacyData")}
+                  description={legacyStatus?.hasLegacyData
+                    ? t("settings.workspace.legacyDetectedDesc", {
+                        count: legacyStatus.detectedEntries.length,
+                        target: legacyStatus.workspaceDataDir,
+                      })
+                    : t("settings.workspace.legacyEmpty")}
+                  action={
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void loadLegacyStatus()}
+                        className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-background shadow-minimal hover:bg-foreground/[0.02] transition-colors"
+                        disabled={isRefreshingLegacy || isMigratingLegacy}
+                      >
+                        {isRefreshingLegacy ? t("common.loading") : t("settings.workspace.legacyRefresh")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLegacyMigrate()}
+                        className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-background shadow-minimal hover:bg-foreground/[0.02] transition-colors"
+                        disabled={!legacyStatus?.hasLegacyData || isMigratingLegacy || isRefreshingLegacy}
+                      >
+                        {isMigratingLegacy ? t("common.loading") : t("settings.workspace.legacyMigrate")}
+                      </button>
+                    </div>
+                  }
+                />
+              </SettingsCard>
             </SettingsSection>
 
             {/* Advanced */}
