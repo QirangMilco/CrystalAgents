@@ -8,6 +8,12 @@ import type { BackgroundTask } from '../ActiveTasksBar'
 import { ActiveOptionBadges } from '../ActiveOptionBadges'
 import { InputContainer } from './InputContainer'
 
+type SessionRecordItem = {
+  turnId: string
+  role: 'user' | 'assistant' | 'system' | 'auth-request'
+  excerpt: string
+}
+
 interface ChatInputZoneProps {
   compactMode?: boolean
   showOptionBadges?: boolean
@@ -24,6 +30,8 @@ interface ChatInputZoneProps {
   sessionStatuses?: SessionStatus[]
   currentSessionStatus?: string
   onSessionStatusChange?: (stateId: string) => void
+  sessionRecords?: SessionRecordItem[]
+  onJumpToSessionRecord?: (turnId: string) => void
   className?: string
   inputProps: React.ComponentProps<typeof InputContainer>
 }
@@ -44,6 +52,8 @@ export function ChatInputZone({
   sessionStatuses = [],
   currentSessionStatus = 'todo',
   onSessionStatusChange,
+  sessionRecords = [],
+  onJumpToSessionRecord,
   className,
   inputProps,
 }: ChatInputZoneProps) {
@@ -90,6 +100,8 @@ export function ChatInputZone({
           sessionStatuses={sessionStatuses}
           currentSessionStatus={currentSessionStatus}
           onSessionStatusChange={onSessionStatusChange}
+          sessionRecords={sessionRecords}
+          onJumpToSessionRecord={onJumpToSessionRecord}
         />
       )}
 

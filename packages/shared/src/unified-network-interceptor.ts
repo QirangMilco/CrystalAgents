@@ -1183,20 +1183,6 @@ export function createOpenAiResponsesSseStrippingStream(): TransformStream<Uint8
   });
 }
 
-export function applyOpenAiResponsesExecutionDefaults(body: Record<string, unknown>): Record<string, unknown> {
-  const tools = body.tools as unknown;
-  if (!Array.isArray(tools) || tools.length === 0) return body;
-
-  if (body.tool_choice === undefined) {
-    body.tool_choice = 'auto';
-  }
-  if (body.parallel_tool_calls === undefined) {
-    body.parallel_tool_calls = true;
-  }
-
-  return body;
-}
-
 const openAiResponsesAdapter: ApiAdapter = {
   name: 'openai-responses',
 
@@ -1288,11 +1274,6 @@ const openAiResponsesAdapter: ApiAdapter = {
   },
 
   stripsSseMetadata: true,
-
-  modifyRequest(_url: string, init: RequestInit, body: Record<string, unknown>): { init: RequestInit; body: Record<string, unknown> } {
-    applyOpenAiResponsesExecutionDefaults(body);
-    return { init, body };
-  },
 };
 
 // ============================================================================
@@ -1549,15 +1530,6 @@ async function interceptedFetch(
           body: JSON.stringify(parsed),
           ...(proxy ? { proxy } : {}),
         };
-
-        if (adapter.name === 'openai-responses') {
-          const p = parsed as Record<string, unknown>;
-          const reasoning = p.reasoning as Record<string, unknown> | undefined;
-          const reasoningEffort = reasoning?.effort ?? p.reasoning_effort;
-          debugLog(
-            `[openai-responses] thinking=${process.env.CRAFT_PI_THINKING_LEVEL || '-'} mapped=${process.env.CRAFT_PI_THINKING_LEVEL_MAPPED || '-'} reasoning_effort=${typeof reasoningEffort === 'string' ? reasoningEffort : 'none'}`,
-          );
-        }
 
         debugLog(`[${adapter.name}] Intercepted request to ${url}`);
         const response = await originalFetch(url, finalInit);

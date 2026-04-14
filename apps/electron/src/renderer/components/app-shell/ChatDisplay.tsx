@@ -6,18 +6,15 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   CircleAlert,
   ExternalLink,
   Info,
-  Search,
   X,
 } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 import { toast } from "sonner"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { Markdown, CollapsibleMarkdownProvider, StreamingMarkdown, type RenderMode } from "@/components/markdown"
 import { AnimatedCollapsibleContent } from "@/components/ui/collapsible"
@@ -250,6 +247,40 @@ type ChatSearchResult = {
   matchIndexInTurn: number
   role: 'user' | 'assistant' | 'system' | 'auth-request'
   excerpt: string
+}
+
+type SessionRecordItem = {
+  turnId: string
+  role: 'user' | 'assistant' | 'system' | 'auth-request'
+  excerpt: string
+}
+
+function getTurnRecordContent(turn: Turn): string {
+  if (turn.type === 'user') {
+    const content = turn.message.content as unknown
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+      return content
+        .filter((block: { type?: string }) => block.type === 'text')
+        .map((block: { text?: string }) => block.text || '')
+        .join('\n')
+    }
+    return ''
+  }
+
+  if (turn.type === 'assistant') {
+    return turn.response?.text || ''
+  }
+
+  if (turn.type === 'system') {
+    return turn.message.content
+  }
+
+  if (turn.type === 'auth-request') {
+    return turn.message.content || ''
+  }
+
+  return ''
 }
 
 function normalizeExcerptForMessage(text: string, maxLength = 280): string {
@@ -640,7 +671,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // ============================================================================
   // Current match index for navigation (internal state, exposed via ref)
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
-  const [isInlineSearchOpen, setInlineSearchOpen] = useState(false)
   const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false)
   const turnRefs = React.useRef<Map<string, HTMLDivElement>>(new Map())
   const pendingRestoreScrollTopRef = React.useRef<number | null>(null)
@@ -662,12 +692,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const shouldScrollToMatchRef = React.useRef(false)
   const prevSessionIdForScrollRef = React.useRef<string | null>(null)
 
-  // Use the external search query from props; fall back to local in-chat query.
-  const [internalSearchQuery, setInternalSearchQuery] = useState('')
-  const effectiveSearchQuery = (externalSearchQuery && externalSearchQuery.trim().length >= 2)
-    ? externalSearchQuery
-    : internalSearchQuery
-  const searchQuery = effectiveSearchQuery
+  // Search query comes from session list search state.
+  const searchQuery = externalSearchQuery || ''
   // Require 2+ characters to activate in-chat search
   const isSearchActive = searchQuery.trim().length >= 2
 
@@ -1557,6 +1583,51 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const turns = allTurns.slice(startIndex)
   const hasMoreAbove = startIndex > 0
 
+  const sessionRecords = useMemo<SessionRecordItem[]>(() => {
+    return allTurns.map((turn) => {
+      const role: SessionRecordItem['role'] = turn.type === 'assistant' ? 'assistant' : turn.type
+      return {
+        turnId: getTurnKey(turn),
+        role,
+        excerpt: normalizeExcerptForMessage(getTurnRecordContent(turn), 140),
+      }
+    })
+  }, [allTurns])
+
+  const jumpToTurn = useCallback((turnId: string) => {
+    const targetTurnIndex = allTurns.findIndex(turn => getTurnKey(turn) === turnId)
+    if (targetTurnIndex < 0) return
+
+    const ensureVisibleCount = allTurns.length - targetTurnIndex + 5
+
+    const scrollToTurn = () => {
+      const turnContainer = turnRefs.current.get(turnId)
+      if (!turnContainer) return false
+      turnContainer.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return true
+    }
+
+    if (ensureVisibleCount > visibleTurnCount) {
+      setVisibleTurnCount(ensureVisibleCount)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!scrollToTurn()) {
+            setTimeout(() => {
+              void scrollToTurn()
+            }, 80)
+          }
+        })
+      })
+      return
+    }
+
+    if (!scrollToTurn()) {
+      requestAnimationFrame(() => {
+        void scrollToTurn()
+      })
+    }
+  }, [allTurns, visibleTurnCount])
+
   const assistantTurnIndexByMessageId = useMemo(() => {
     const map = new Map<string, number>()
     allTurns.forEach((turn, index) => {
@@ -1652,85 +1723,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           <div className="flex flex-1 flex-col min-h-0 min-w-0 relative z-10">
           {/* === MESSAGES AREA: Scrollable list of message bubbles === */}
           <div className="relative flex-1 min-h-0">
-            {!compactMode && (
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 w-[min(760px,calc(100%-24px))]">
-                <div className="rounded-lg border bg-background/95 backdrop-blur-sm shadow-sm p-2">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setInlineSearchOpen(prev => !prev)}
-                      className="inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border hover:bg-muted/60"
-                      aria-label={t('chat.searchToggleAria')}
-                    >
-                      <Search className="h-3.5 w-3.5" />
-                      <span>{t('chat.searchInSession')}</span>
-                    </button>
-                    <span className="text-xs text-muted-foreground">
-                      {isSearchActive ? t('chat.searchMatches', { count: validMatches.length }) : t('chat.searchAtLeastTwoChars')}
-                    </span>
-                    {isSearchActive && (
-                      <div className="ml-auto flex items-center gap-1">
-                        <button
-                          type="button"
-                          className="inline-flex items-center justify-center rounded-md border p-1.5 hover:bg-muted/60 disabled:opacity-40"
-                          onClick={goToPrevMatch}
-                          disabled={currentMatchIndex <= 0}
-                          aria-label={t('chat.searchPrevMatchAria')}
-                        >
-                          <ChevronUp className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          className="inline-flex items-center justify-center rounded-md border p-1.5 hover:bg-muted/60 disabled:opacity-40"
-                          onClick={goToNextMatch}
-                          disabled={currentMatchIndex >= Math.max(0, validMatches.length - 1)}
-                          aria-label={t('chat.searchNextMatchAria')}
-                        >
-                          <ChevronDown className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {isInlineSearchOpen && (
-                    <div className="mt-2 space-y-2">
-                      <Input
-                        value={internalSearchQuery}
-                        onChange={(e) => setInternalSearchQuery(e.target.value)}
-                        placeholder={t('chat.searchCurrentSessionPlaceholder')}
-                        className="h-8"
-                      />
-
-                      {isSearchActive && validMatches.length > 0 && (
-                        <div className="max-h-44 overflow-y-auto pr-1 space-y-1">
-                          {validMatches.slice(0, 50).map((match, idx) => (
-                            <button
-                              key={match.matchId}
-                              type="button"
-                              onClick={() => jumpToMatch(idx)}
-                              className={cn(
-                                "w-full text-left rounded-md px-2 py-1.5 border text-xs hover:bg-muted/60",
-                                idx === currentMatchIndex && "border-info bg-info/10"
-                              )}
-                            >
-                              <div className="font-medium text-[11px] text-muted-foreground mb-0.5">
-                                {t(`chat.searchRole.${match.role === 'auth-request' ? 'authRequest' : match.role}`)} · #{match.turnIndex + 1}
-                              </div>
-                              <div className="truncate">{match.excerpt || t('chat.searchEmptyContent')}</div>
-                            </button>
-                          ))}
-                          {validMatches.length > 50 && (
-                            <div className="text-[11px] text-muted-foreground px-1 py-0.5">
-                              {t('chat.searchShowTopResults', { count: 50 })}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
             {/* Mask wrapper - fades content at top and bottom over transparent/image backgrounds */}
             <div
               className="h-full"
@@ -2113,6 +2105,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             sessionStatuses={sessionStatuses}
             currentSessionStatus={session.sessionStatus || 'todo'}
             onSessionStatusChange={onSessionStatusChange}
+            sessionRecords={sessionRecords}
+            onJumpToSessionRecord={jumpToTurn}
             inputProps={{
               placeholder,
               disabled: isInputDisabled,

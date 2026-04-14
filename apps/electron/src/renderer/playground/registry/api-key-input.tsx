@@ -41,7 +41,7 @@ export const apiKeyInputComponents: ComponentEntry[] = [
           initialValues: {
             activePreset: 'custom',
             baseUrl: 'https://your-endpoint.com/v1',
-            customApi: 'openai-responses',
+            customApi: 'openai-completions',
           },
         },
       },

@@ -161,6 +161,11 @@ function parseModelList(value: string): string[] {
     .filter(Boolean)
 }
 
+function normalizeCustomApi(api?: string): CustomEndpointApi {
+  if (api === 'anthropic-messages') return 'anthropic-messages'
+  return 'openai-completions'
+}
+
 // ============================================================
 // Pi model tier selection (for providers with many models)
 // ============================================================
@@ -191,7 +196,7 @@ export function ApiKeyInput({
     initialPreset !== 'custom' ? initialPreset : defaultPreset.key
   )
   const [connectionDefaultModel, setConnectionDefaultModel] = useState(initialValues?.connectionDefaultModel ?? '')
-  const [customApi, setCustomApi] = useState<CustomEndpointApi>(initialValues?.customApi ?? 'openai-completions')
+  const [customApi, setCustomApi] = useState<CustomEndpointApi>(normalizeCustomApi(initialValues?.customApi))
   const [modelError, setModelError] = useState<string | null>(null)
 
   // Bedrock auth state
@@ -385,7 +390,7 @@ export function ApiKeyInput({
 
     // Include custom endpoint protocol when user configured a custom base URL
     const isCustomEndpoint = activePreset === 'custom' && !!effectiveBaseUrl
-    const customEndpoint = isCustomEndpoint ? { api: customApi } : undefined
+    const customEndpoint = isCustomEndpoint ? { api: normalizeCustomApi(customApi) } : undefined
     const resolvedPiAuthProvider = isCustomEndpoint
       ? (customApi === 'anthropic-messages' ? 'anthropic' : 'openai')
       : effectivePiAuthProvider
@@ -505,7 +510,6 @@ export function ApiKeyInput({
           )}>
             {([
               { value: 'openai-completions' as const, label: 'OpenAI Compatible' },
-              { value: 'openai-responses' as const, label: 'OpenAI Compatible (Responses)' },
               { value: 'anthropic-messages' as const, label: 'Anthropic Compatible' },
             ]).map(({ value, label }) => (
               <button

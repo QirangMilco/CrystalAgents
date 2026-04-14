@@ -32,7 +32,6 @@ import type {
   AgentSession,
   AgentSessionEvent,
   AgentToolResult,
-  AuthCredential,
   CreateAgentSessionOptions,
   ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
@@ -80,7 +79,7 @@ type PiCredential =
   | { type: 'iam'; accessKeyId: string; secretAccessKey: string; region?: string; sessionToken?: string };
 
 /** Custom endpoint protocol — determines which streaming adapter Pi SDK uses */
-type CustomEndpointApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages';
+type CustomEndpointApi = 'openai-completions' | 'anthropic-messages';
 
 /** Init message from main process — configures the Pi agent server */
 interface InitMessage {
@@ -144,11 +143,7 @@ type EnrichedToolExecutionStartEvent = Extract<AgentSessionEvent, { type: 'tool_
   toolMetadata?: ToolExecutionMetadata;
 };
 
-type OutboundMessageEndEventWithAnchor = Extract<AgentSessionEvent, { type: 'message_end' }> & {
-  sdkTurnAnchor?: string;
-};
-
-type OutboundAgentEvent = AgentSessionEvent | EnrichedToolExecutionStartEvent | OutboundMessageEndEventWithAnchor;
+type OutboundAgentEvent = AgentSessionEvent | EnrichedToolExecutionStartEvent;
 
 /** Messages to main process (stdout) */
 interface OutboundReady { type: 'ready'; sessionId: string | null; callbackPort: number }
@@ -448,22 +443,14 @@ function createAuthenticatedRegistry(): {
   const authStorage = moduleAuthStorage;
   if (initConfig?.piAuth) {
     const { provider, credential } = initConfig.piAuth;
-    if (credential.type === 'iam') {
-      process.env.AWS_ACCESS_KEY_ID = credential.accessKeyId;
-      process.env.AWS_SECRET_ACCESS_KEY = credential.secretAccessKey;
-      if (credential.sessionToken) process.env.AWS_SESSION_TOKEN = credential.sessionToken;
-      if (credential.region) process.env.AWS_REGION = credential.region;
-      debugLog(`Injected iam credential via env for provider: ${provider}`);
-    } else {
-      authStorage.set(provider, credential as AuthCredential);
-      debugLog(`Injected ${credential.type} credential for provider: ${provider}`);
-    }
+    authStorage.set(provider, credential);
+    debugLog(`Injected ${credential.type} credential for provider: ${provider}`);
   } else if (initConfig?.apiKey) {
     authStorage.set('anthropic', { type: 'api_key', key: initConfig.apiKey });
     debugLog('Injected API key into auth storage (legacy fallback)');
   }
 
-  const modelRegistry = PiModelRegistry.create(authStorage);
+  const modelRegistry = PiModelRegistry.inMemory(authStorage);
 
   // Register custom endpoint models dynamically via Pi SDK's registerProvider API.
   // This makes arbitrary OpenAI/Anthropic-compatible endpoints work through the Pi SDK
@@ -608,11 +595,6 @@ async function ensureSession(): Promise<AgentSession> {
 
   // Set thinking level
   const piThinkingLevel = THINKING_TO_PI[initConfig.thinkingLevel as keyof typeof THINKING_TO_PI];
-  process.env.CRAFT_PI_THINKING_LEVEL = initConfig.thinkingLevel;
-  process.env.CRAFT_PI_THINKING_LEVEL_MAPPED = piThinkingLevel || '';
-  debugLog(
-    `[thinking] init requested=${initConfig.thinkingLevel} mapped=${piThinkingLevel || 'none'} model=${initConfig.model || '-'} apiHint=${process.env.CRAFT_PI_MODEL_API || '-'}`,
-  );
   if (piThinkingLevel) {
     sessionOptions.thinkingLevel = piThinkingLevel;
   }
@@ -852,7 +834,6 @@ function buildProxyTools(): AgentTool<any>[] {
 
 async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   if (!initConfig) throw new Error('Cannot run queryLlm: init not received');
-  const cfg = initConfig;
 
   debugLog('[queryLlm] Starting');
 
@@ -860,7 +841,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   // what the user authenticated with (e.g. gemini-2.5-pro when only anthropic
   // credentials exist), fall back to the default summarization model which uses
   // the same provider family.
-  let model = request.model ?? cfg.miniModel ?? getDefaultSummarizationModel();
+  let model = request.model ?? initConfig.miniModel ?? getDefaultSummarizationModel();
 
   // Create authenticated registry upfront — used by both the provider guard and the ephemeral session.
   const { authStorage, modelRegistry } = createAuthenticatedRegistry();
@@ -884,8 +865,8 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   // Pi SDK will fail with "No API key found" if the model requires a different provider.
   // Exception: 'custom-endpoint' provider is always compatible because it has its own
   // API key configured via resolveCustomEndpointApiKey() and doesn't use authStorage.
-  if (cfg.piAuth) {
-    const authProvider = cfg.piAuth.provider;
+  if (initConfig.piAuth) {
+    const authProvider = initConfig.piAuth.provider;
     const bareModel = model.startsWith('pi/') ? model.slice(3) : model;
     const resolved = resolvePiModel(modelRegistry, bareModel, authProvider, shouldPreferCustomEndpoint());
     const resolvedProvider = (resolved as any)?.provider;
@@ -912,7 +893,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     // Resolve model
     let piModel: ReturnType<typeof resolvePiModel>;
     try {
-      piModel = resolvePiModel(modelRegistry, modelId, cfg.piAuth?.provider, shouldPreferCustomEndpoint());
+      piModel = resolvePiModel(modelRegistry, modelId, initConfig.piAuth?.provider, shouldPreferCustomEndpoint());
       if (piModel) {
         ephemeralOptions.model = piModel;
       }
@@ -1004,7 +985,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   const fallbackCandidates = [
     'pi/gpt-5.1-codex-mini',
     'pi/gpt-5-mini',
-    cfg.miniModel,
+    initConfig.miniModel,
     getDefaultSummarizationModel(),
   ].filter((candidate): candidate is string => !!candidate && !isDeniedMiniModelId(candidate));
 
@@ -1027,11 +1008,11 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
       const retryModel = fallbackCandidates.find(candidate => {
         if (triedModels.has(candidate)) return false;
         try {
-          const resolved = resolvePiModel(modelRegistry, candidate, cfg.piAuth?.provider, shouldPreferCustomEndpoint());
+          const resolved = resolvePiModel(modelRegistry, candidate, initConfig.piAuth?.provider, shouldPreferCustomEndpoint());
           if (!resolved) return false;
-          if (cfg.piAuth) {
+          if (initConfig.piAuth) {
             const rp = (resolved as any).provider;
-            if (rp !== cfg.piAuth.provider && rp !== 'custom-endpoint') {
+            if (rp !== initConfig.piAuth.provider && rp !== 'custom-endpoint') {
               return false;
             }
           }
@@ -1118,9 +1099,7 @@ function handleSessionEvent(event: AgentSessionEvent): void {
           (c) => c.type === 'toolCall' && c.name && isPrefetchableTool(c.name),
         );
         if (prefetchableToolCalls.length >= 2) {
-          const firstToolCall = prefetchableToolCalls[0];
-          const firstToolName = firstToolCall?.name ?? 'tool';
-          debugLog(`Prefetching ${prefetchableToolCalls.length} parallel ${firstToolName} calls`);
+          debugLog(`Prefetching ${prefetchableToolCalls.length} parallel ${prefetchableToolCalls[0].name} calls`);
           for (const tc of prefetchableToolCalls) {
             const requestId = `prefetch-${tc.id}`;
             const promise = new Promise<{ content: string; isError: boolean }>((resolve) => {
@@ -1308,7 +1287,7 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
           message: `Prompt overflow recovery failed: ${retryMsg}`,
           code: 'prompt_overflow_recovery_failed',
         });
-        send({ type: 'event', event: { type: 'agent_end', messages: [] } });
+        send({ type: 'event', event: { type: 'agent_end' } });
         return;
       }
     }
@@ -1316,7 +1295,7 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
     debugLog(`Prompt failed: ${errorMsg}`);
     send({ type: 'error', message: errorMsg, code: 'prompt_error' });
     // Send synthetic agent_end so the main process event queue unblocks
-    send({ type: 'event', event: { type: 'agent_end', messages: [] } });
+    send({ type: 'event', event: { type: 'agent_end' } });
   }
 }
 
@@ -1461,12 +1440,7 @@ async function handleSetModel(msg: Extract<InboundMessage, { type: 'set_model' }
   // (registerProvider replaces, so we track all IDs and re-register the full set).
   if (!piModel && initConfig?.baseUrl?.trim() && initConfig?.customEndpoint) {
     const bareId = stripPiPrefix(msg.model);
-    registerCustomEndpointModels(
-      piModelRegistry,
-      initConfig.customEndpoint.api,
-      initConfig.baseUrl!.trim(),
-      [{ id: bareId }],
-    );
+    registerCustomEndpointModels(piModelRegistry, initConfig.customEndpoint.api, initConfig.baseUrl!.trim(), [bareId]);
     piModel = piModelRegistry.find('custom-endpoint', bareId) ?? undefined;
     debugLog(`[set_model] Dynamically registered custom endpoint model: ${bareId}`);
   }
@@ -1502,8 +1476,6 @@ async function handleSetThinkingLevel(msg: Extract<InboundMessage, { type: 'set_
 
   try {
     piSession.setThinkingLevel(piLevel);
-    process.env.CRAFT_PI_THINKING_LEVEL = msg.level;
-    process.env.CRAFT_PI_THINKING_LEVEL_MAPPED = piLevel;
     debugLog(`[set_thinking_level] Thinking level changed to: ${msg.level} (mapped: ${piLevel})`);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -1609,14 +1581,7 @@ async function processMessage(msg: InboundMessage): Promise<void> {
     case 'token_update':
       if (moduleAuthStorage) {
         const { provider, credential } = msg.piAuth;
-        if (credential.type === 'iam') {
-          process.env.AWS_ACCESS_KEY_ID = credential.accessKeyId;
-          process.env.AWS_SECRET_ACCESS_KEY = credential.secretAccessKey;
-          if (credential.sessionToken) process.env.AWS_SESSION_TOKEN = credential.sessionToken;
-          if (credential.region) process.env.AWS_REGION = credential.region;
-        } else {
-          moduleAuthStorage.set(provider, credential as AuthCredential);
-        }
+        moduleAuthStorage.set(provider, credential);
         if (initConfig) {
           initConfig.piAuth = msg.piAuth;
         }

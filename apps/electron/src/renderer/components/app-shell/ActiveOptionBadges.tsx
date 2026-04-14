@@ -2,8 +2,9 @@ import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Input } from '@/components/ui/input'
 import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } from '@/components/ui/slash-command-menu'
-import { ChevronDown, Info } from 'lucide-react'
+import { ChevronDown, History, Info, Search } from 'lucide-react'
 import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
 import type { BackgroundTask } from './ActiveTasksBar'
 import { LabelIcon, LabelValueTypeIcon } from '@/components/ui/label-icon'
@@ -74,6 +75,10 @@ export interface ActiveOptionBadgesProps {
   currentSessionStatus?: string
   /** Callback when state changes */
   onSessionStatusChange?: (stateId: string) => void
+  /** Session turn records shown in records popover */
+  sessionRecords?: SessionRecordItem[]
+  /** Jump to selected session record */
+  onJumpToSessionRecord?: (turnId: string) => void
   /** Additional CSS classes */
   className?: string
 }
@@ -83,6 +88,12 @@ interface ResolvedLabelEntry {
   config: LabelConfig
   rawValue?: string
   index: number
+}
+
+interface SessionRecordItem {
+  turnId: string
+  role: 'user' | 'assistant' | 'system' | 'auth-request'
+  excerpt: string
 }
 
 export function ActiveOptionBadges({
@@ -102,6 +113,8 @@ export function ActiveOptionBadges({
   sessionStatuses = [],
   currentSessionStatus,
   onSessionStatusChange,
+  sessionRecords = [],
+  onJumpToSessionRecord,
   className,
 }: ActiveOptionBadgesProps) {
   // Resolve session label entries to their config objects + parsed values.
@@ -218,8 +231,13 @@ export function ActiveOptionBadges({
 
       </div>
 
-      {/* Right side: Files popover button */}
-      <div className="shrink-0">
+      {/* Right side: Records + Info popovers */}
+      <div className="shrink-0 flex items-center gap-2">
+        <SessionRecordsPopoverButton
+          sessionId={sessionId}
+          records={sessionRecords}
+          onJumpToRecord={onJumpToSessionRecord}
+        />
         <FilesPopoverButton sessionId={sessionId} sessionFolderPath={sessionFolderPath} />
       </div>
     </div>
@@ -385,6 +403,122 @@ function StateBadge({
           onSelect={handleSelect}
           states={sessionStatuses}
         />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function SessionRecordsPopoverButton({
+  sessionId,
+  records,
+  onJumpToRecord,
+}: {
+  sessionId?: string
+  records: SessionRecordItem[]
+  onJumpToRecord?: (turnId: string) => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = React.useState(false)
+  const [query, setQuery] = React.useState('')
+
+  const filteredRecords = React.useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return records
+    return records.filter((record) => {
+      const roleLabel = t(`chat.searchRole.${record.role === 'auth-request' ? 'authRequest' : record.role}`).toLowerCase()
+      return roleLabel.includes(q) || record.excerpt.toLowerCase().includes(q)
+    })
+  }, [query, records, t])
+
+  if (!sessionId) return null
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "h-[30px] pl-[12px] pr-[14px] text-xs font-medium rounded-[8px] flex items-center gap-1.5 shrink-0",
+            "outline-none select-none transition-colors shadow-minimal",
+            "hover:bg-foreground/5 data-[state=open]:bg-foreground/5",
+            "bg-[color-mix(in_srgb,var(--background)_97%,var(--foreground)_3%)]",
+            "text-foreground/80",
+          )}
+        >
+          <History className="h-3.5 w-3.5 shrink-0" />
+          <span className="whitespace-nowrap">{t('common.records')}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-[360px] h-[460px] min-w-[200px] max-w-[420px] overflow-hidden rounded-[8px] bg-background text-foreground shadow-modal-small p-0"
+        side="top"
+        align="end"
+        sideOffset={6}
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+        }}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent('craft:focus-input', {
+            detail: { sessionId },
+          }))
+        }}
+      >
+        <div className="h-full min-h-0 flex flex-col">
+          <div className="shrink-0 p-3 border-b border-border/50">
+            <div className="rounded-lg bg-foreground-2 has-[:focus]:bg-background shadow-minimal transition-colors px-2">
+              <div className="h-9 flex items-center gap-2">
+                <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('chat.searchCurrentSessionPlaceholder')}
+                  className="h-9 py-2 text-sm border-0 shadow-none bg-transparent focus-visible:ring-0 px-0"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
+            {filteredRecords.length === 0 ? (
+              <div className="px-2 py-6 text-xs text-muted-foreground text-center">
+                {t('chat.searchEmptyContent')}
+              </div>
+            ) : (
+              filteredRecords.map((record) => {
+                const roleTone = record.role === 'user'
+                  ? 'border-accent/20 bg-accent/5 hover:bg-accent/10'
+                  : record.role === 'assistant'
+                    ? 'border-info/20 bg-info/5 hover:bg-info/10'
+                    : 'border-foreground/10 bg-foreground/[0.03] hover:bg-foreground/[0.06]'
+
+                const roleDotTone = record.role === 'user'
+                  ? 'bg-accent/70'
+                  : record.role === 'assistant'
+                    ? 'bg-info/70'
+                    : 'bg-foreground/40'
+
+                return (
+                  <button
+                    key={record.turnId}
+                    type="button"
+                    onClick={() => {
+                      onJumpToRecord?.(record.turnId)
+                      setOpen(false)
+                    }}
+                    className={cn('w-full text-left rounded-md px-2 py-1.5 border text-xs transition-colors', roleTone)}
+                  >
+                    <div className="font-medium text-[11px] text-muted-foreground mb-0.5 flex items-center gap-1.5">
+                      <span className={cn('inline-block w-1.5 h-1.5 rounded-full shrink-0', roleDotTone)} />
+                      <span>{t(`chat.searchRole.${record.role === 'auth-request' ? 'authRequest' : record.role}`)}</span>
+                    </div>
+                    <div className="truncate">{record.excerpt || t('chat.searchEmptyContent')}</div>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
       </PopoverContent>
     </Popover>
   )

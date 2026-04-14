@@ -104,14 +104,22 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       }
 
       const customEndpoint = hasConfiguredBaseUrl ? setup.customEndpoint : undefined
-      const isCustomEndpointCompat = !!customEndpoint
-      if (customEndpoint) {
-        updates.customEndpoint = customEndpoint
+      const normalizedCustomEndpoint = customEndpoint
+        ? {
+            ...customEndpoint,
+            api: ((customEndpoint as { api?: string }).api === 'openai-responses'
+              ? 'openai-completions'
+              : customEndpoint.api),
+          }
+        : undefined
+      const isCustomEndpointCompat = !!normalizedCustomEndpoint
+      if (normalizedCustomEndpoint) {
+        updates.customEndpoint = normalizedCustomEndpoint
         // Route custom OpenAI/Anthropic-compatible endpoints through PiAgent.
         updates.providerType = 'pi_compat'
         updates.authType = 'api_key_with_endpoint'
         // Keep provider hint in lockstep with selected protocol toggle.
-        updates.piAuthProvider = customEndpoint.api === 'anthropic-messages' ? 'anthropic' : 'openai'
+        updates.piAuthProvider = normalizedCustomEndpoint.api === 'anthropic-messages' ? 'anthropic' : 'openai'
       } else if (setup.baseUrl !== undefined) {
         // Base URL was explicitly updated without custom protocol config.
         // Treat this as non-custom mode and clear stale custom endpoint metadata.
