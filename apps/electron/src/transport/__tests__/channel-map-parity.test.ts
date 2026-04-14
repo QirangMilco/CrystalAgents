@@ -26,6 +26,8 @@ type ApiToChannelMapKeys = Exclude<
   | 'invokeOnServer' // direct IPC to main process — cross-server RPC
   | 'detectOfficialImportSource' // direct IPC to main process — manual import source detection
   | 'importOfficialData' // direct IPC to main process — manual import execution
+  | 'transferSessionToWorkspace' // direct IPC to main process — orchestrated remote transfer
+  | 'onTransferProgress' // direct IPC listener — chunk upload progress
   | 'changeLanguage' // direct IPC to main process — syncs i18n language
 > | BrowserPaneKeys
 type ChannelMapKeys = keyof typeof CHANNEL_MAP & string

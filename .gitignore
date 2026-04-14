@@ -59,6 +59,7 @@ pnpm-lock.yaml
 .craft-agent/
 .craft-agents/
 .crystal-agent/
+.crystal-agent-dev/
 # Craft Agent local workspace artifacts (not for VCS)
 /sessions/
 /.claude-plugin/

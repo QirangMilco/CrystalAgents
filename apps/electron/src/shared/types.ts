@@ -272,6 +272,10 @@ export interface ElectronAPI {
     }>
   }>
 
+  // Remote session transfer (main-process orchestrated, supports chunked upload)
+  transferSessionToWorkspace(sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number): Promise<{ sessionId: string }>
+  onTransferProgress(callback: (progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => void): () => void
+
   // Session export/import (cross-workspace transfer)
   exportSession(sessionId: string): Promise<unknown>
   importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork'): Promise<{ sessionId: string; warnings?: string[] }>
@@ -279,7 +283,7 @@ export interface ElectronAPI {
   importRemoteSessionTransfer(targetWorkspaceId: string, payload: RemoteSessionTransferPayload): Promise<ImportRemoteSessionTransferResult>
 
   // Pending plan execution (for reload recovery)
-  getPendingPlanExecution(sessionId: string): Promise<{ planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean } | null>
+  getPendingPlanExecution(sessionId: string): Promise<{ planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null>
   // Permission mode reconciliation
   getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
