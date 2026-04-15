@@ -674,6 +674,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false)
   const turnRefs = React.useRef<Map<string, HTMLDivElement>>(new Map())
   const pendingRestoreScrollTopRef = React.useRef<number | null>(null)
+  const lastValidScrollSnapshotRef = React.useRef<ChatScrollSnapshot | null>(null)
   // Inject ::highlight() styles at runtime to avoid LightningCSS build warnings
   // (the optimizer doesn't recognize ::highlight as a valid pseudo-element yet)
   React.useEffect(() => {
@@ -1263,27 +1264,35 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     const viewport = scrollViewportRef.current
     if (!viewport) return
 
+    lastValidScrollSnapshotRef.current = null
+
     let saveTimer: ReturnType<typeof setTimeout> | null = null
-    const saveSnapshot = () => {
-      const snapshot: ChatScrollSnapshot = {
-        scrollTop: viewport.scrollTop,
-        visibleTurnCount,
-        stickToBottom: isStickToBottomRef.current,
-        savedAt: Date.now(),
-      }
+    const persistLatestSnapshot = () => {
+      const snapshot = lastValidScrollSnapshotRef.current
+      if (!snapshot) return
       storage.set(storage.KEYS.sessionScrollState, snapshot, session.id)
     }
 
+    const captureSnapshot = (): ChatScrollSnapshot => ({
+      scrollTop: viewport.scrollTop,
+      visibleTurnCount,
+      stickToBottom: isStickToBottomRef.current,
+      savedAt: Date.now(),
+    })
+
     const handleViewportScroll = () => {
+      lastValidScrollSnapshotRef.current = captureSnapshot()
       if (saveTimer) clearTimeout(saveTimer)
-      saveTimer = setTimeout(saveSnapshot, 120)
+      saveTimer = setTimeout(persistLatestSnapshot, 120)
     }
 
     viewport.addEventListener('scroll', handleViewportScroll)
 
     return () => {
       if (saveTimer) clearTimeout(saveTimer)
-      saveSnapshot()
+      // 仅落盘滚动事件发生当时捕获的快照，避免在卸载阶段重新读取
+      // 已被布局切换重置的 viewport.scrollTop。
+      persistLatestSnapshot()
       viewport.removeEventListener('scroll', handleViewportScroll)
     }
   }, [session?.id, visibleTurnCount])
@@ -1314,22 +1323,39 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     setShouldRestoreScroll(true)
   }, [session?.id])
 
-  // Restore saved scrollTop after messages are mounted
+  // Restore saved scrollTop only after real messages are mounted and the content is tall enough.
+  // During workspace switch, data may load in phases; if we restore too early, the browser clamps
+  // scrollTop to the current max and we would otherwise clear the pending restore state too soon.
   React.useEffect(() => {
-    if (!shouldRestoreScroll) return
+    if (!shouldRestoreScroll || messagesLoading) return
     const viewport = scrollViewportRef.current
     const targetScrollTop = pendingRestoreScrollTopRef.current
     if (!viewport || targetScrollTop == null) return
 
     const applyRestore = () => {
-      viewport.scrollTop = targetScrollTop
+      const maxScrollableTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+      const clampedTargetScrollTop = Math.min(targetScrollTop, maxScrollableTop)
+
+      // Content height is not ready yet; keep pending state and retry on next render/layout growth.
+      if (targetScrollTop > 0 && maxScrollableTop < targetScrollTop) {
+        return
+      }
+
+      viewport.scrollTop = clampedTargetScrollTop
+
+      const restoredScrollTop = viewport.scrollTop
+      const restoreSucceeded = Math.abs(restoredScrollTop - clampedTargetScrollTop) <= 2
+      if (!restoreSucceeded) {
+        return
+      }
+
       pendingRestoreScrollTopRef.current = null
       setShouldRestoreScroll(false)
       skipSmoothScrollUntilRef.current = Date.now() + 500
     }
 
     requestAnimationFrame(() => requestAnimationFrame(applyRestore))
-  }, [shouldRestoreScroll, session?.messages?.length, visibleTurnCount])
+  }, [shouldRestoreScroll, messagesLoading, session?.messages?.length, visibleTurnCount])
 
   // Auto-scroll using ResizeObserver for streaming content
   // Initial scroll is handled by ScrollOnMount (useLayoutEffect, before paint)
