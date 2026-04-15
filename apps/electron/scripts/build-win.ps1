@@ -3,6 +3,32 @@
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $getFileHashCmd = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+    if ($null -ne $getFileHashCmd) {
+        return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+
+    return ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLower()
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ElectronDir = Split-Path -Parent $ScriptDir
 $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
@@ -120,8 +146,8 @@ try {
 
     # Verify checksum
     Write-Host "Verifying checksum..."
-    $ExpectedHash = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String "$BunDownload.zip").ToString().Split(" ")[0]
-    $ActualHash = (Get-FileHash "$TempDir\$BunDownload.zip" -Algorithm SHA256).Hash.ToLower()
+    $ExpectedHash = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String "$BunDownload.zip").ToString().Split(" ")[0].ToLower()
+    $ActualHash = Get-Sha256Hex "$TempDir\$BunDownload.zip"
 
     if ($ActualHash -ne $ExpectedHash) {
         throw "Checksum verification failed! Expected: $ExpectedHash, Got: $ActualHash"
@@ -295,7 +321,7 @@ if (Test-Path $BunExe) {
     }
 
     # Check file hash
-    $hash = (Get-FileHash $BunExe -Algorithm SHA256).Hash
+    $hash = Get-Sha256Hex $BunExe
     Write-Host "SHA256: $hash"
 } else {
     Write-Host "ERROR: bun.exe not found at $BunExe" -ForegroundColor Red
