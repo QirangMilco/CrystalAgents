@@ -104,13 +104,14 @@ jobs:
         shell: bash
         run: bash scripts/build-dmg.sh arm64 --no-sign
 
-      - name: Upload macOS arm64 artifacts
+      - name: Upload macOS artifacts (all dmg/zip)
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-macos-arm64
+          name: desktop-macos-all
           if-no-files-found: error
           path: |
-            apps/electron/release/*.dmg
-            apps/electron/release/*.zip
-            apps/electron/release/*.yml
-            apps/electron/release/*.blockmap
+            apps/electron/release/**/Craft-Agents-*.dmg
+            apps/electron/release/**/Craft-Agents-*.zip
+            apps/electron/release/**/latest*.yml
+            apps/electron/release/**/latest*.json
+            apps/electron/release/**/latest*.blockmap

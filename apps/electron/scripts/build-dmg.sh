@@ -124,16 +124,10 @@ echo "Installing dependencies..."
 cd "$ROOT_DIR"
 bun install
 
-# 3. Build subprocess servers required by packaged app
-# (session-mcp-server / pi-agent-server are spawned at runtime)
-echo "Building subprocess servers..."
+# 3. Build and stage subprocess servers (session-mcp-server / pi-agent-server)
+echo "Building and staging subprocess servers..."
 cd "$ROOT_DIR"
-bun run server:build:subprocess
-
-# Stage subprocess servers into electron resources for packaging
-mkdir -p "$ELECTRON_DIR/resources/session-mcp-server" "$ELECTRON_DIR/resources/pi-agent-server"
-cp "$ROOT_DIR/packages/session-mcp-server/dist/index.js" "$ELECTRON_DIR/resources/session-mcp-server/index.js"
-cp "$ROOT_DIR/packages/pi-agent-server/dist/index.js" "$ELECTRON_DIR/resources/pi-agent-server/index.js"
+bun run scripts/build/stage-subprocess-servers.ts --platform darwin --arch "$ARCH"
 
 # 4. Ensure pinned Bun binary (with local cache)
 BUN_DOWNLOAD="bun-darwin-$([ "$ARCH" = "arm64" ] && echo "aarch64" || echo "x64")"

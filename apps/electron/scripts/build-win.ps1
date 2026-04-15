@@ -180,7 +180,17 @@ try {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
 
-# 4. Copy SDK from root node_modules (monorepo hoisting)
+# 4. Build and stage subprocess servers (session-mcp-server / pi-agent-server)
+Write-Host "Building and staging subprocess servers..."
+Push-Location $RootDir
+try {
+    bun run scripts/build/stage-subprocess-servers.ts --platform win32 --arch x64
+    if ($LASTEXITCODE -ne 0) { throw "Subprocess server staging failed" }
+} finally {
+    Pop-Location
+}
+
+# 5. Copy SDK from root node_modules (monorepo hoisting)
 $SdkSource = "$RootDir\node_modules\@anthropic-ai\claude-agent-sdk"
 if (-not (Test-Path $SdkSource)) {
     Write-Host "ERROR: SDK not found at $SdkSource" -ForegroundColor Red
@@ -191,7 +201,7 @@ Write-Host "Copying SDK..."
 New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@anthropic-ai" | Out-Null
 Copy-Item -Recurse -Force $SdkSource "$ElectronDir\node_modules\@anthropic-ai\"
 
-# 5. Copy interceptor
+# 6. Copy interceptor
 $InterceptorSource = "$RootDir\packages\shared\src\unified-network-interceptor.ts"
 if (-not (Test-Path $InterceptorSource)) {
     Write-Host "ERROR: Interceptor not found at $InterceptorSource" -ForegroundColor Red
@@ -208,7 +218,7 @@ foreach ($dep in @("interceptor-common.ts", "feature-flags.ts", "interceptor-req
     }
 }
 
-# 6. Build Electron app
+# 7. Build Electron app
 Write-Host "Building Electron app..."
 
 # Build main process with OAuth credentials

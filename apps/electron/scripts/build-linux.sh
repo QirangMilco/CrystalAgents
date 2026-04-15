@@ -113,7 +113,12 @@ unzip -o "$TEMP_DIR/${BUN_DOWNLOAD}.zip" -d "$TEMP_DIR"
 cp "$TEMP_DIR/${BUN_DOWNLOAD}/bun" "$ELECTRON_DIR/vendor/bun/"
 chmod +x "$ELECTRON_DIR/vendor/bun/bun"
 
-# 4. Copy SDK from root node_modules (monorepo hoisting)
+# 4. Build and stage subprocess servers (session-mcp-server / pi-agent-server)
+echo "Building and staging subprocess servers..."
+cd "$ROOT_DIR"
+bun run scripts/build/stage-subprocess-servers.ts --platform linux --arch "$ARCH"
+
+# 5. Copy SDK from root node_modules (monorepo hoisting)
 # Note: The SDK is hoisted to root node_modules by the package manager.
 # We copy it here because electron-builder only sees apps/electron/.
 SDK_SOURCE="$ROOT_DIR/node_modules/@anthropic-ai/claude-agent-sdk"
@@ -122,7 +127,7 @@ echo "Copying SDK..."
 mkdir -p "$ELECTRON_DIR/node_modules/@anthropic-ai"
 cp -r "$SDK_SOURCE" "$ELECTRON_DIR/node_modules/@anthropic-ai/"
 
-# 5. Copy interceptor
+# 6. Copy interceptor
 INTERCEPTOR_SOURCE="$ROOT_DIR/packages/shared/src/unified-network-interceptor.ts"
 require_path "$INTERCEPTOR_SOURCE" "Interceptor" "Ensure packages/shared/src/unified-network-interceptor.ts exists."
 echo "Copying interceptor..."
@@ -135,7 +140,7 @@ for dep in interceptor-common.ts feature-flags.ts interceptor-request-utils.ts; 
   fi
 done
 
-# 6. Build Electron app
+# 7. Build Electron app
 echo "Building Electron app..."
 cd "$ROOT_DIR"
 bun run electron:build
