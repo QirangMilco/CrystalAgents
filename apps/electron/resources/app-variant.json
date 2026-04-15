@@ -9,7 +9,7 @@
   "import": {
     "sourceConfigDirName": ".craft-agent",
     "copyOnFirstLaunch": false,
-    "workspaceDetection": true,
+    "workspaceDetection": false,
     "include": [
       "config.json",
       "preferences.json",
