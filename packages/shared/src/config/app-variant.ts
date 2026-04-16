@@ -10,6 +10,12 @@ export interface AppVariantConfig {
   dmgTitle: string;
   configDirName: string;
   workspaceDataDirName: string;
+  update: {
+    enabled: boolean;
+    checkOnLaunch: boolean;
+    autoDownload: boolean;
+    autoInstallOnQuit: boolean;
+  };
   import: {
     sourceConfigDirName: string;
     copyOnFirstLaunch: boolean;
@@ -26,6 +32,12 @@ const DEFAULT_APP_VARIANT: AppVariantConfig = {
   dmgTitle: 'Craft Agents',
   configDirName: '.craft-agent',
   workspaceDataDirName: '.craft-agents',
+  update: {
+    enabled: true,
+    checkOnLaunch: true,
+    autoDownload: true,
+    autoInstallOnQuit: true,
+  },
   import: {
     sourceConfigDirName: '.craft-agent',
     copyOnFirstLaunch: false,
@@ -98,6 +110,10 @@ function mergeVariant(partial: Partial<AppVariantConfig>): AppVariantConfig {
   return {
     ...DEFAULT_APP_VARIANT,
     ...partial,
+    update: {
+      ...DEFAULT_APP_VARIANT.update,
+      ...(partial.update ?? {}),
+    },
     import: {
       ...DEFAULT_APP_VARIANT.import,
       ...(partial.import ?? {}),

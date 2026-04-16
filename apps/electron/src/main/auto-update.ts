@@ -24,6 +24,7 @@ import { getAppVersion } from '@craft-agent/shared/version'
 import {
   getDismissedUpdateVersion,
   clearDismissedUpdateVersion,
+  getAppVariant,
 } from '@craft-agent/shared/config'
 import { readJsonFileSync } from '@craft-agent/shared/utils/files'
 import { RPC_CHANNELS, type UpdateInfo } from '../shared/types'
@@ -111,11 +112,13 @@ function broadcastDownloadProgress(progress: number): void {
 
 // ─── Configure electron-updater ───────────────────────────────────────────────
 
+const updatePolicy = getAppVariant().update
+
 // Auto-download updates in the background after detection
-autoUpdater.autoDownload = true
+autoUpdater.autoDownload = updatePolicy.enabled && updatePolicy.autoDownload
 
 // Install on app quit (if update is downloaded but user hasn't clicked "Restart")
-autoUpdater.autoInstallOnAppQuit = true
+autoUpdater.autoInstallOnAppQuit = updatePolicy.enabled && updatePolicy.autoInstallOnQuit
 
 // Use the logger for electron-updater internal logging
 autoUpdater.logger = {
@@ -314,7 +317,11 @@ function checkForExistingDownload(): { exists: boolean; version?: string } {
  * @param options.autoDownload - If false, only checks without downloading (for manual "Check Now")
  */
 export async function checkForUpdates(options: CheckOptions = {}): Promise<UpdateInfo> {
-  const { autoDownload = true } = options
+  if (!updatePolicy.enabled) {
+    return getUpdateInfo()
+  }
+
+  const { autoDownload = updatePolicy.autoDownload } = options
 
   // Temporarily override autoDownload for this check if needed
   // (e.g., manual check from settings shouldn't auto-download on metered connections)
@@ -413,9 +420,14 @@ export interface UpdateOnLaunchResult {
  * - Auto-downloads if update available
  */
 export async function checkForUpdatesOnLaunch(): Promise<UpdateOnLaunchResult> {
+  if (!updatePolicy.enabled || !updatePolicy.checkOnLaunch) {
+    mainLog.info('[auto-update] Skipping update check on launch for this app variant')
+    return { action: 'skipped', reason: 'variant-disabled' }
+  }
+
   mainLog.info('[auto-update] Checking for updates on launch...')
 
-  const info = await checkForUpdates({ autoDownload: true })
+  const info = await checkForUpdates({ autoDownload: updatePolicy.autoDownload })
 
   if (!info.available) {
     return { action: 'none' }

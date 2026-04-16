@@ -1328,12 +1328,12 @@ app.whenReady().then(async () => {
     // Initialize auto-update (check immediately on launch)
     // Skip in dev mode to avoid replacing /Applications app and launching it instead
     if (moduleSink) setAutoUpdateEventSink(moduleSink)
-    if (app.isPackaged) {
+    if (app.isPackaged && variant.update.enabled && variant.update.checkOnLaunch) {
       checkForUpdatesOnLaunch().catch(err => {
         mainLog.error('[auto-update] Launch check failed:', err)
       })
     } else {
-      mainLog.info('[auto-update] Skipping auto-update in dev mode')
+      mainLog.info('[auto-update] Skipping auto-update on launch for this build')
     }
 
     // Process pending deep link from cold start

@@ -3,7 +3,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getGitBashPath, setGitBashPath, clearGitBashPath } from '@craft-agent/shared/config'
+import { getGitBashPath, setGitBashPath, clearGitBashPath, getAppVariant } from '@craft-agent/shared/config'
 import { isUsableGitBashPath, validateGitBashPath } from '@craft-agent/server-core/services'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import type { RpcServer } from '@craft-agent/server-core/transport'
@@ -271,7 +271,8 @@ export function registerSystemGuiHandlers(server: RpcServer, deps: HandlerDeps):
   // Auto-update handlers
   server.handle(RPC_CHANNELS.update.CHECK, async () => {
     const { checkForUpdates } = await import('../auto-update')
-    return checkForUpdates({ autoDownload: true })
+    const updatePolicy = getAppVariant().update
+    return checkForUpdates({ autoDownload: updatePolicy.autoDownload })
   })
 
   server.handle(RPC_CHANNELS.update.GET_INFO, async () => {

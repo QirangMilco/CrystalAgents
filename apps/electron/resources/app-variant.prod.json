@@ -6,6 +6,12 @@
   "dmgTitle": "Crystal Agents",
   "configDirName": ".crystal-agent",
   "workspaceDataDirName": ".crystal-agent",
+  "update": {
+    "enabled": true,
+    "checkOnLaunch": false,
+    "autoDownload": false,
+    "autoInstallOnQuit": false
+  },
   "import": {
     "sourceConfigDirName": ".craft-agent",
     "copyOnFirstLaunch": false,

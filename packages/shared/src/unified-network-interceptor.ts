@@ -188,6 +188,22 @@ export function stripMetadataFieldsFromRawJson(json: string): string {
     .replace(/,\s*}/g, '}');
 }
 
+/**
+ * Apply OpenAI Responses API execution defaults when tools are present.
+ *
+ * The Responses API does not always default these fields the way the app expects.
+ * Exported for focused unit tests.
+ */
+export function applyOpenAiResponsesExecutionDefaults(body: Record<string, unknown>): void {
+  if (!Array.isArray(body.tools) || body.tools.length === 0) return;
+  if (body.tool_choice === undefined) {
+    body.tool_choice = 'auto';
+  }
+  if (body.parallel_tool_calls === undefined) {
+    body.parallel_tool_calls = true;
+  }
+}
+
 // ============================================================================
 // ANTHROPIC ADAPTER
 // ============================================================================

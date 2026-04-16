@@ -1,5 +1,6 @@
 import { Menu, app, shell, BrowserWindow } from 'electron'
 import { i18n } from '@craft-agent/shared/i18n'
+import { getAppVariant } from '@craft-agent/shared/config'
 import { RPC_CHANNELS, type BroadcastEventMap } from '../shared/types'
 import { EDIT_MENU, VIEW_MENU, WINDOW_MENU } from '../shared/menu-schema'
 import type { MenuItem } from '../shared/menu-schema'
@@ -58,6 +59,7 @@ export async function rebuildMenu(): Promise<void> {
 
   // Get current update state
   const { getUpdateInfo, installUpdate, checkForUpdates } = await import('./auto-update')
+  const updatePolicy = getAppVariant().update
   const updateInfo = getUpdateInfo()
   const updateReady = updateInfo.available && updateInfo.downloadState === 'ready'
 
@@ -72,7 +74,7 @@ export async function rebuildMenu(): Promise<void> {
     : {
         label: i18n.t("menu.checkForUpdatesEllipsis"),
         click: async () => {
-          await checkForUpdates({ autoDownload: true })
+          await checkForUpdates({ autoDownload: updatePolicy.autoDownload })
         }
       }
 
@@ -197,7 +199,7 @@ export async function rebuildMenu(): Promise<void> {
           label: i18n.t("menu.checkForUpdates"),
           click: async () => {
             const { checkForUpdates } = await import('./auto-update')
-            const info = await checkForUpdates({ autoDownload: true })
+            const info = await checkForUpdates({ autoDownload: updatePolicy.autoDownload })
             mainLog.info('[debug-menu] Update check result:', info)
           }
         },
