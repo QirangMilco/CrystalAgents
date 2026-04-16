@@ -143,6 +143,9 @@ export interface LlmConnection {
   /** Default model for this connection */
   defaultModel?: string;
 
+  /** Optional explicit mini model for titles, summaries, and utility completions */
+  miniModel?: string;
+
   /**
    * Ownership mode for the model list.
    * - automaticallySyncedFromProvider: provider defaults are kept in sync.
@@ -204,7 +207,10 @@ export interface LlmConnectionWithStatus extends LlmConnection {
  * @param connection - LLM connection (or partial with models + providerType)
  * @returns Model ID string, or undefined if no models available
  */
-export function getMiniModel(connection: Pick<LlmConnection, 'models' | 'providerType'>): string | undefined {
+export function getMiniModel(connection: Pick<LlmConnection, 'models' | 'providerType' | 'miniModel'>): string | undefined {
+  if (connection.miniModel) {
+    return normalizeProviderModelId(connection.providerType, connection.miniModel);
+  }
   return findSmallModel(connection);
 }
 
@@ -218,8 +224,19 @@ export function getMiniModel(connection: Pick<LlmConnection, 'models' | 'provide
  * @param connection - LLM connection (or partial with models + providerType)
  * @returns Model ID string, or undefined if no models available
  */
-export function getSummarizationModel(connection: Pick<LlmConnection, 'models' | 'providerType'>): string | undefined {
+export function getSummarizationModel(connection: Pick<LlmConnection, 'models' | 'providerType' | 'miniModel'>): string | undefined {
+  if (connection.miniModel) {
+    return normalizeProviderModelId(connection.providerType, connection.miniModel);
+  }
   return findSmallModel(connection);
+}
+
+export function normalizeProviderModelId(providerType: LlmProviderType | undefined, modelId: string | undefined): string | undefined {
+  if (!modelId) return undefined;
+  if (providerType === 'pi' && !modelId.startsWith('pi/')) {
+    return `pi/${modelId}`;
+  }
+  return modelId;
 }
 
 /**
@@ -264,13 +281,16 @@ function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType
       return keywords.some(k => searchStr.includes(k));
     });
     if (match) {
-      return toId(match);
+      return normalizeProviderModelId(connection.providerType, toId(match));
     }
   }
 
   // Fallback: last allowed model in the list, otherwise final entry.
   const fallback = [...connection.models].reverse().find(isAllowedModel);
-  return fallback ? toId(fallback) : toId(connection.models[connection.models.length - 1]!);
+  return normalizeProviderModelId(
+    connection.providerType,
+    fallback ? toId(fallback) : toId(connection.models[connection.models.length - 1]!),
+  );
 }
 
 /**

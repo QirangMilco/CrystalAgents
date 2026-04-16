@@ -140,6 +140,7 @@ export function apiSetupMethodToConnectionSetup(
     credential?: string
     baseUrl?: string
     connectionDefaultModel?: string
+    miniModel?: string
     models?: string[]
     piAuthProvider?: string
     modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
@@ -160,6 +161,7 @@ export function apiSetupMethodToConnectionSetup(
         credential: options.credential,
         baseUrl: options.baseUrl,
         defaultModel: options.connectionDefaultModel,
+        miniModel: options.miniModel,
         models: options.models,
         customEndpoint: options.customEndpoint,
       }
@@ -180,6 +182,7 @@ export function apiSetupMethodToConnectionSetup(
         credential: options.credential,
         baseUrl: options.baseUrl,
         defaultModel: options.connectionDefaultModel,
+        miniModel: options.miniModel,
         models: options.models,
         piAuthProvider: options.piAuthProvider,
         modelSelectionMode: options.modelSelectionMode,
@@ -245,6 +248,7 @@ export function useOnboarding({
     options?: {
       baseUrl?: string
       connectionDefaultModel?: string
+      miniModel?: string
       models?: string[]
       piAuthProvider?: string
       modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
@@ -270,6 +274,7 @@ export function useOnboarding({
         credential,
         baseUrl: options?.baseUrl,
         connectionDefaultModel: options?.connectionDefaultModel,
+        miniModel: options?.miniModel,
         models: options?.models,
         piAuthProvider: options?.piAuthProvider,
         modelSelectionMode: options?.modelSelectionMode,
@@ -388,6 +393,7 @@ export function useOnboarding({
         const saved = await handleSaveConfig(undefined, {
           baseUrl: data.baseUrl,
           connectionDefaultModel: data.connectionDefaultModel,
+          miniModel: data.miniModel,
           models: data.models,
           piAuthProvider: data.piAuthProvider,
           modelSelectionMode: data.modelSelectionMode,
@@ -408,6 +414,7 @@ export function useOnboarding({
         const saved = await handleSaveConfig(undefined, {
           baseUrl: data.baseUrl,
           connectionDefaultModel: data.connectionDefaultModel,
+          miniModel: data.miniModel,
           models: data.models,
           piAuthProvider: data.piAuthProvider,
           modelSelectionMode: data.modelSelectionMode,
@@ -469,6 +476,7 @@ export function useOnboarding({
       const saved = await handleSaveConfig(data.apiKey, {
         baseUrl: data.baseUrl,
         connectionDefaultModel: data.connectionDefaultModel,
+        miniModel: data.miniModel,
         models: data.models,
         piAuthProvider: data.piAuthProvider,
         modelSelectionMode: data.modelSelectionMode,

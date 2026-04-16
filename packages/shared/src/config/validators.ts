@@ -88,6 +88,7 @@ const LlmConnectionSchema = z.object({
   baseUrl: z.string().optional(),
   models: z.array(z.union([z.string(), z.object({ id: z.string() }).passthrough()])).optional(),
   defaultModel: z.string().optional(),
+  miniModel: z.string().optional(),
   modelSelectionMode: z.enum(['automaticallySyncedFromProvider', 'userDefined3Tier']).optional(),
   customEndpoint: CustomEndpointSchema.optional(),
   createdAt: z.number(),

@@ -516,10 +516,13 @@ export interface AgentBackend {
   getSourceManager(): SourceManager;
 
   /** Generate a session title from user message */
-  generateTitle(message: string, options?: { language?: string }): Promise<string | null>;
+  generateTitle(message: string, options?: { language?: string; locale?: string }): Promise<string | null>;
 
   /** Regenerate a session title from recent conversation */
-  regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { language?: string }): Promise<string | null>;
+  regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { language?: string; locale?: string }): Promise<string | null>;
+
+  /** Last title-generation failure reason, for diagnostics */
+  getLastTitleGenerationFailure(): string | null;
 
   // ============================================================
   // Permission Resolution

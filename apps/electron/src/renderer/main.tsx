@@ -8,13 +8,21 @@ import App from './App'
 import { ThemeProvider } from './context/ThemeContext'
 import { windowWorkspaceIdAtom } from './atoms/sessions'
 import { Toaster } from '@/components/ui/sonner'
-import { setupI18n } from '@craft-agent/shared/i18n'
+import { setupI18n, i18n } from '@craft-agent/shared/i18n'
 import { initReactI18next } from 'react-i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import './index.css'
 
 // Initialize i18n before any React rendering
 setupI18n([LanguageDetector, initReactI18next])
+
+// Sync persisted renderer language to the main process on startup.
+// Renderer uses browser localStorage detection; the main process does not,
+// so without this bootstrap sync the server-side i18n instance falls back to English.
+const startupLanguage = i18n.resolvedLanguage ?? i18n.language
+if (startupLanguage) {
+  void window.electronAPI?.changeLanguage?.(startupLanguage)
+}
 
 // Known-harmless console messages that should NOT be sent to Sentry.
 // These are dev-mode noise or expected warnings that aren't actionable.

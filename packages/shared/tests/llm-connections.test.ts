@@ -42,6 +42,19 @@ describe('getMiniModel()', () => {
     expect(getMiniModel(conn)).toBe('pi/gpt-5.1-codex-mini');
   });
 
+  it('normalizes bare mini model ids for pi provider', () => {
+    const conn = makeConnection('pi', [
+      'gpt-5.1',
+      'gpt-5.1-mini',
+    ]);
+    expect(getMiniModel(conn)).toBe('pi/gpt-5.1-mini');
+  });
+
+  it('prefers explicit miniModel when configured', () => {
+    const conn = { providerType: 'pi' as const, models: ['pi/gpt-5.1', 'pi/gpt-5.1-mini'], miniModel: 'pi/gpt-5.1' };
+    expect(getMiniModel(conn)).toBe('pi/gpt-5.1');
+  });
+
   it('skips denied codex-mini-latest alias for pi provider', () => {
     const conn = makeConnection('pi', [
       'pi/codex-mini-latest',

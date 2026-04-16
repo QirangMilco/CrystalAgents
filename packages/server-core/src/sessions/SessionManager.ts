@@ -4280,7 +4280,10 @@ export class SessionManager implements ISessionManager {
     // Derive language from app's i18n setting for language-aware title generation
     const titleLangCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode
     const titleLangEntry = LOCALE_REGISTRY[titleLangCode]
-    const titleOptions = { language: titleLangEntry?.nativeName }
+    const titleOptions = { locale: titleLangCode, language: titleLangEntry?.nativeName }
+    if (process.env.CRAFT_DEBUG_TITLE === '1') {
+      sessionLog.info(`refreshTitle: title language options locale=${titleOptions.locale} language=${titleOptions.language ?? 'unknown'} resolvedLanguage=${i18n.resolvedLanguage ?? 'unknown'}`)
+    }
 
     // Use existing agent or create temporary one
     let agent: AgentInstance | null = managed.agent
@@ -4305,7 +4308,7 @@ export class SessionManager implements ISessionManager {
         }, buildBackendHostRuntimeContext()) as AgentInstance
         await agent.postInit()
         isTemporary = true
-        sessionLog.info(`refreshTitle: Created temporary agent for session ${sessionId}`)
+        sessionLog.info(`refreshTitle: Created temporary agent for session ${sessionId} (connection=${managed.llmConnection}, miniModel=${resolvedMiniModel ?? 'unknown'})`)
       } catch (error) {
         sessionLog.error(`refreshTitle: Failed to create temporary agent:`, error)
         return { success: false, error: 'Failed to create agent for title generation' }
@@ -4328,7 +4331,8 @@ export class SessionManager implements ISessionManager {
 
     try {
       const title = await agent.regenerateTitle(userMessages, assistantResponse, titleOptions)
-      sessionLog.info(`refreshTitle: regenerateTitle returned: ${title ? `"${title}"` : 'null'}`)
+      const titleFailure = agent.getLastTitleGenerationFailure()
+      sessionLog.info(`refreshTitle: regenerateTitle returned: ${title ? `"${title}"` : 'null'}${titleFailure ? ` (failure=${titleFailure})` : ''}`)
       if (title) {
         managed.name = title
         this.persistSession(managed)
@@ -4337,7 +4341,26 @@ export class SessionManager implements ISessionManager {
         sessionLog.info(`Refreshed title for session ${sessionId}: "${title}"`)
         return { success: true, title }
       }
-      // Failed to generate - clear regenerating state
+
+      // Fallback: derive a safe local title so regenerate never fails silently
+      const fallbackSource = userMessages.find((msg) => msg.trim().length > 0)
+        ?? allUserContents.find((msg) => msg.trim().length > 0)
+        ?? ''
+      const fallbackSanitized = sanitizeForTitle(fallbackSource)
+      const fallbackFirstClause = (fallbackSanitized.split(/[。！？!?；;\n\r]/u).find((part) => part.trim().length > 0) ?? fallbackSanitized).trim()
+      const fallbackTitle = fallbackFirstClause
+        ? (fallbackFirstClause.slice(0, 16) + (fallbackFirstClause.length > 16 ? '…' : ''))
+        : null
+
+      if (fallbackTitle) {
+        managed.name = fallbackTitle
+        this.persistSession(managed)
+        this.sendEvent({ type: 'title_generated', sessionId, title: fallbackTitle }, managed.workspace.id)
+        sessionLog.warn(`refreshTitle: regenerateTitle returned null; fallback title used: "${fallbackTitle}"`)
+        return { success: true, title: fallbackTitle }
+      }
+
+      // Failed to generate and no usable fallback
       this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: false }, managed.workspace.id)
       return { success: false, error: 'Failed to generate title' }
     } catch (error) {
@@ -5966,7 +5989,10 @@ export class SessionManager implements ISessionManager {
     try {
       const genLangCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode
       const genLangEntry = LOCALE_REGISTRY[genLangCode]
-      const title = await agent.generateTitle(userMessage, { language: genLangEntry?.nativeName })
+      if (process.env.CRAFT_DEBUG_TITLE === '1') {
+        sessionLog.info(`[generateTitle] title language options locale=${genLangCode} language=${genLangEntry?.nativeName ?? 'unknown'} resolvedLanguage=${i18n.resolvedLanguage ?? 'unknown'}`)
+      }
+      const title = await agent.generateTitle(userMessage, { locale: genLangCode, language: genLangEntry?.nativeName })
       if (title) {
         managed.name = title
         this.persistSession(managed)

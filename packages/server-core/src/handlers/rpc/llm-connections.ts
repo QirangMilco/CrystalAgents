@@ -96,6 +96,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       if (setup.defaultModel !== undefined) {
         updates.defaultModel = setup.defaultModel ?? undefined
       }
+      if (setup.miniModel !== undefined) {
+        updates.miniModel = setup.miniModel ?? undefined
+      }
       if (setup.models !== undefined) {
         updates.models = setup.models ?? undefined
       }
@@ -171,6 +174,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         if (updates.defaultModel) {
           updates.defaultModel = toPiModelId(updates.defaultModel)
         }
+        if (updates.miniModel) {
+          updates.miniModel = toPiModelId(updates.miniModel)
+        }
       }
 
       const pendingConnection: LlmConnection = {
@@ -185,6 +191,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
           piAuthProvider: pendingConnection.piAuthProvider,
           modelSelectionMode: pendingConnection.modelSelectionMode,
           defaultModel: pendingConnection.defaultModel,
+          miniModel: pendingConnection.miniModel,
           modelCount: modelIds.length,
           modelsFirst5: modelIds.slice(0, 5),
           setupModelCount: setup.models?.length,
@@ -201,7 +208,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       }
 
       if (updates.models && updates.models.length > 0) {
-        const validation = validateModelList(updates.models, pendingConnection.defaultModel)
+        const validation = validateModelList(updates.models, pendingConnection.defaultModel, pendingConnection.miniModel)
         if (!validation.valid) {
           return { success: false, error: validation.error }
         }

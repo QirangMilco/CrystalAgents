@@ -115,7 +115,7 @@ type InboundMessage =
   | { type: 'tool_execute_response'; requestId: string; result: { content: string; isError: boolean } }
   | { type: 'pre_tool_use_response'; requestId: string; action: 'allow' | 'block' | 'modify'; input?: Record<string, unknown>; reason?: string }
   | { type: 'abort' }
-  | { type: 'mini_completion'; id: string; prompt: string }
+  | { type: 'mini_completion'; id: string; prompt: string; systemPrompt?: string; maxTokens?: number; temperature?: number }
   | { type: 'ensure_session_ready'; id: string }
   | { type: 'set_model'; model: string }
   | { type: 'set_thinking_level'; level: string }
@@ -1040,9 +1040,17 @@ async function preExecuteCallLlm(input: Record<string, unknown>): Promise<LLMQue
   return queryLlm(request);
 }
 
-async function runMiniCompletion(prompt: string): Promise<string | null> {
+async function runMiniCompletion(
+  prompt: string,
+  options?: { systemPrompt?: string; maxTokens?: number; temperature?: number }
+): Promise<string | null> {
   try {
-    const result = await queryLlm({ prompt });
+    const result = await queryLlm({
+      prompt,
+      systemPrompt: options?.systemPrompt,
+      maxTokens: options?.maxTokens,
+      temperature: options?.temperature,
+    });
     const text = result.text || null;
     debugLog(`[runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
     return text;
@@ -1360,7 +1368,12 @@ async function handleMiniCompletion(msg: Extract<InboundMessage, { type: 'mini_c
   // as 'error' messages instead of being swallowed and returned as null.
   // runMiniCompletion is kept for the summarize callback where null is acceptable.
   try {
-    const result = await queryLlm({ prompt: msg.prompt });
+    const result = await queryLlm({
+      prompt: msg.prompt,
+      systemPrompt: msg.systemPrompt,
+      maxTokens: msg.maxTokens,
+      temperature: msg.temperature,
+    });
     send({ type: 'mini_completion_result', id: msg.id, text: result.text || null });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

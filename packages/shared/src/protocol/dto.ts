@@ -340,6 +340,7 @@ export interface LlmConnectionSetup {
   credential?: string
   baseUrl?: string | null
   defaultModel?: string | null
+  miniModel?: string | null
   models?: string[] | null
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'

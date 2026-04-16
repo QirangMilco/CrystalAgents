@@ -4,6 +4,8 @@ set -euo pipefail
 # One-click launcher for a dev Electron instance isolated from official app.
 # Uses a separate config dir so .server.lock / workspaces / settings won't conflict.
 
+CRAFT_DEBUG_TITLE=1
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Defaults (can override via env before running this script)
@@ -20,6 +22,7 @@ export CRAFT_APP_NAME
 export CRAFT_DEEPLINK_SCHEME
 export CRAFT_APP_VARIANT_PATH
 export CRAFT_ELECTRON_USER_DATA_DIR
+export CRAFT_DEBUG_TITLE
 
 mkdir -p "$CRAFT_CONFIG_DIR" "$CRAFT_ELECTRON_USER_DATA_DIR"
 
@@ -30,6 +33,7 @@ echo "[dev-instance] CRAFT_APP_NAME=$CRAFT_APP_NAME"
 echo "[dev-instance] CRAFT_DEEPLINK_SCHEME=$CRAFT_DEEPLINK_SCHEME"
 echo "[dev-instance] CRAFT_APP_VARIANT_PATH=$CRAFT_APP_VARIANT_PATH"
 echo "[dev-instance] CRAFT_ELECTRON_USER_DATA_DIR=$CRAFT_ELECTRON_USER_DATA_DIR"
+echo "[dev-instance] CRAFT_DEBUG_TITLE=$CRAFT_DEBUG_TITLE"
 
 cd "$ROOT_DIR"
 exec bun run electron:dev

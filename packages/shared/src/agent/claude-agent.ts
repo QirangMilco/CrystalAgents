@@ -2576,7 +2576,10 @@ This is a branched conversation. All prior messages in this conversation are par
    * No tools, empty system prompt - just text in → text out.
    * Uses the same auth infrastructure as the main agent.
    */
-  async runMiniCompletion(prompt: string): Promise<string | null> {
+  async runMiniCompletion(
+    prompt: string,
+    miniOptions?: { systemPrompt?: string; maxTokens?: number; temperature?: number }
+  ): Promise<string | null> {
     if (!this.config.miniModel) {
       throw new Error('ClaudeAgent.runMiniCompletion: config.miniModel is required');
     }
@@ -2586,7 +2589,9 @@ This is a branched conversation. All prior messages in this conversation are par
       ...getDefaultOptions(this.config.envOverrides),
       model,
       maxTurns: 1,
-      systemPrompt: 'Reply with ONLY the requested text. No explanation.', // Minimal - no Claude Code preset
+      systemPrompt: miniOptions?.systemPrompt ?? 'Reply with ONLY the requested text. No explanation.',
+      ...(miniOptions?.maxTokens ? { maxTokens: miniOptions.maxTokens } : {}),
+      ...(miniOptions?.temperature !== undefined ? { temperature: miniOptions.temperature } : {}),
       thinking: { type: 'disabled' as const },
     };
 

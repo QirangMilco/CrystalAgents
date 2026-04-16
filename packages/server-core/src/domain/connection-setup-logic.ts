@@ -226,6 +226,7 @@ export function createBuiltInConnection(slug: string, baseUrl?: string | null): 
 export function validateModelList(
   models: Array<ModelDefinition | string>,
   defaultModel: string | undefined,
+  miniModel?: string,
 ): { valid: boolean; error?: string; resolvedDefaultModel?: string } {
   if (!models || models.length === 0) {
     return { valid: true }
@@ -237,6 +238,13 @@ export function validateModelList(
     return {
       valid: false,
       error: `Default model "${defaultModel}" is not in the provided model list.`,
+    }
+  }
+
+  if (miniModel && !modelIds.includes(miniModel)) {
+    return {
+      valid: false,
+      error: `Mini model "${miniModel}" is not in the provided model list.`,
     }
   }
 

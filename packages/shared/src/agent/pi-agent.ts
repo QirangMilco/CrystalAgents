@@ -867,6 +867,7 @@ export class PiAgent extends BaseAgent {
         }
 
         if (errorCode === 'mini_completion_error') {
+          console.warn(`[PiAgent] mini_completion_error: ${rawMessage}`);
           this.debug('Ignoring mini completion subprocess error in chat stream');
           break;
         }
@@ -2083,7 +2084,10 @@ export class PiAgent extends BaseAgent {
    * Run a simple text completion via the subprocess.
    * Sends a mini_completion request and waits for the result.
    */
-  async runMiniCompletion(prompt: string): Promise<string | null> {
+  async runMiniCompletion(
+    prompt: string,
+    miniOptions?: { systemPrompt?: string; maxTokens?: number; temperature?: number }
+  ): Promise<string | null> {
     // If subprocess isn't running, spawn it
     await this.ensureSubprocess();
 
@@ -2092,14 +2096,23 @@ export class PiAgent extends BaseAgent {
       this.pendingMiniCompletions.set(id, { resolve, reject });
     });
 
-    this.send({ type: 'mini_completion', id, prompt });
+    this.send({
+      type: 'mini_completion',
+      id,
+      prompt,
+      systemPrompt: miniOptions?.systemPrompt,
+      maxTokens: miniOptions?.maxTokens,
+      temperature: miniOptions?.temperature,
+    });
 
     // Keep this aligned with the subprocess-side queryLlm timeout.
     const timeout = new Promise<string | null>((resolve) => {
       setTimeout(() => {
         if (this.pendingMiniCompletions.has(id)) {
           this.pendingMiniCompletions.delete(id);
-          this.debug(`[runMiniCompletion] Timed out after ${LLM_QUERY_TIMEOUT_MS / 1000}s`);
+          const message = `[runMiniCompletion] Timed out after ${LLM_QUERY_TIMEOUT_MS / 1000}s`;
+          this.debug(message);
+          console.warn(message);
           resolve(null);
         }
       }, LLM_QUERY_TIMEOUT_MS);

@@ -50,7 +50,7 @@ import { OnboardingWizard, type ApiSetupMethod } from '@/components/onboarding'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { getModelShortName, type ModelDefinition } from '@config/models'
-import { getModelsForProviderType, type CustomEndpointApi } from '@config/llm-connections'
+import { getModelsForProviderType, getMiniModel, type CustomEndpointApi } from '@config/llm-connections'
 import { toast } from 'sonner'
 
 /**
@@ -845,6 +845,7 @@ export default function AiSettingsPage() {
   }, [llmConnections])
 
   const defaultModel = defaultConnection?.defaultModel ?? ''
+  const defaultMiniModel = defaultConnection?.miniModel ?? (defaultConnection ? getMiniModel(defaultConnection) ?? '' : '')
 
   // App-level default handlers
   const handleDefaultModelChange = useCallback(async (model: string) => {
@@ -852,6 +853,16 @@ export default function AiSettingsPage() {
     // Update defaultModel on the connection, then save the full connection
     const updated = { ...defaultConnection, defaultModel: model }
     // Remove status fields that aren't part of LlmConnection
+    const { isAuthenticated: _a, authError: _b, isDefault: _c, ...connectionData } = updated
+    await window.electronAPI.saveLlmConnection(connectionData as import('../../../shared/types').LlmConnection)
+    await refreshLlmConnections()
+  }, [defaultConnection, refreshLlmConnections])
+
+  const handleDefaultMiniModelChange = useCallback(async (model: string) => {
+    if (!window.electronAPI || !defaultConnection) return
+    const options = getModelOptionsForConnection(defaultConnection)
+    if (!options.some((option) => option.value === model)) return
+    const updated = { ...defaultConnection, miniModel: model }
     const { isAuthenticated: _a, authError: _b, isDefault: _c, ...connectionData } = updated
     await window.electronAPI.saveLlmConnection(connectionData as import('../../../shared/types').LlmConnection)
     await refreshLlmConnections()
@@ -927,6 +938,15 @@ export default function AiSettingsPage() {
                     description={t("settings.ai.modelDesc")}
                     value={defaultModel}
                     onValueChange={handleDefaultModelChange}
+                    options={getModelOptionsForConnection(defaultConnection).map(o => ({
+                      ...o, description: o.descriptionKey ? t(o.descriptionKey) : o.description,
+                    }))}
+                  />
+                  <SettingsMenuSelectRow
+                    label="Mini model"
+                    description="Used for titles, summaries, and utility completions."
+                    value={defaultMiniModel}
+                    onValueChange={handleDefaultMiniModelChange}
                     options={getModelOptionsForConnection(defaultConnection).map(o => ({
                       ...o, description: o.descriptionKey ? t(o.descriptionKey) : o.description,
                     }))}

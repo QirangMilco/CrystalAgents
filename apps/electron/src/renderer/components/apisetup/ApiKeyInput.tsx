@@ -40,6 +40,7 @@ export interface ApiKeySubmitData {
   apiKey: string
   baseUrl?: string
   connectionDefaultModel?: string
+  miniModel?: string
   models?: string[]
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
@@ -75,6 +76,7 @@ export interface ApiKeyInputProps {
     apiKey?: string
     baseUrl?: string
     connectionDefaultModel?: string
+    miniModel?: string
     activePreset?: string
     models?: string[]
     /** Pre-fill the protocol toggle for custom endpoints */
@@ -340,6 +342,7 @@ export function ApiKeyInput({
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim() || undefined,
         connectionDefaultModel: bestModel,
+        miniModel: cheapModel,
         models,
         piAuthProvider: effectivePiAuthProvider,
         modelSelectionMode: 'userDefined3Tier',

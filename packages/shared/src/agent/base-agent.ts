@@ -158,6 +158,7 @@ export const MINI_AGENT_MCP_KEYS = ['session'] as const;
  * - runMiniCompletion(): Simple text completion using backend's auth
  */
 export abstract class BaseAgent implements AgentBackend {
+  private lastTitleGenerationFailure: string | null = null;
   // ============================================================
   // Backend Identity
   // ============================================================
@@ -1054,13 +1055,18 @@ ${formattedMessages}
 
   /**
    * Run a simple text completion using the agent's auth infrastructure.
-   * No tools, no system prompt - just text in → text out.
-   * Each backend implements using its own SDK (Claude SDK query() or Codex app-server).
+   * Each backend implements using its own SDK (Claude SDK query() or Pi subprocess).
    *
    * @param prompt - The prompt to send
+   * @param options.systemPrompt - Optional system prompt for task-specific shaping
+   * @param options.maxTokens - Optional output cap for terse tasks like title generation
+   * @param options.temperature - Optional sampling temperature
    * @returns The model's response text, or null if completion fails
    */
-  abstract runMiniCompletion(prompt: string): Promise<string | null>;
+  abstract runMiniCompletion(
+    prompt: string,
+    options?: { systemPrompt?: string; maxTokens?: number; temperature?: number }
+  ): Promise<string | null>;
 
   /**
    * Execute an LLM query using the agent's auth infrastructure.
@@ -1169,6 +1175,43 @@ ${formattedMessages}
   // Title Generation (shared implementation using runMiniCompletion)
   // ============================================================
 
+  private logTitleDebug(stage: string, payload: Record<string, unknown>): void {
+    if (process.env.CRAFT_DEBUG_TITLE !== '1') return;
+    try {
+      this.debug(`[title-debug] ${stage} ${JSON.stringify(payload)}`);
+    } catch {
+      this.debug(`[title-debug] ${stage}`);
+    }
+  }
+
+  private getTitleCompletionOptions(options?: { locale?: string; language?: string }): { systemPrompt: string; maxTokens: number; temperature: number } {
+    const locale = options?.locale ?? '';
+    const language = options?.language ?? '';
+    if (locale.startsWith('zh') || /中文/u.test(language)) {
+      return {
+        systemPrompt: '你是标题生成器。你的唯一任务是输出一个会话标题。只输出标题本身，不要解释，不要前缀，不要引号，不要完整句子。标题应概括主题，而不是复述用户原话。通常控制在4到12个字。',
+        maxTokens: 24,
+        temperature: 0.2,
+      };
+    }
+    if (locale.startsWith('ja') || /日本語/u.test(language)) {
+      return {
+        systemPrompt: 'あなたは会話タイトル生成器です。タイトル本文だけを返してください。説明、前置き、引用符、完全な文章は禁止です。ユーザーの発話をそのまま繰り返さず、主題を要約した短いタイトルにしてください。通常は4〜12文字程度です。',
+        maxTokens: 24,
+        temperature: 0.2,
+      };
+    }
+    return {
+      systemPrompt: 'You generate concise conversation titles. Return ONLY the title text. No explanation, no prefix, no quotes, no full sentence. Summarize the topic instead of echoing the user wording.',
+      maxTokens: 20,
+      temperature: 0.2,
+    };
+  }
+
+  getLastTitleGenerationFailure(): string | null {
+    return this.lastTitleGenerationFailure;
+  }
+
   /**
    * Generate a session title from a user message.
    * Uses runMiniCompletion with the same auth as the main agent.
@@ -1177,12 +1220,64 @@ ${formattedMessages}
    * @param options.language - Preferred language for the title
    * @returns Generated title (2-5 words), or null if generation fails
    */
-  async generateTitle(message: string, options?: { language?: string }): Promise<string | null> {
+  async generateTitle(message: string, options?: { language?: string; locale?: string }): Promise<string | null> {
+    this.lastTitleGenerationFailure = null;
     try {
       const prompt = buildTitlePrompt(message, options);
-      const result = await this.runMiniCompletion(prompt);
-      return validateTitle(result);
+      const completionOptions = this.getTitleCompletionOptions(options);
+      this.logTitleDebug('generateTitle.request', {
+        locale: options?.locale ?? null,
+        language: options?.language ?? null,
+        prompt,
+        completionOptions,
+      });
+      const result = await this.runMiniCompletion(prompt, completionOptions);
+      const validated = validateTitle(result, options);
+      this.logTitleDebug('generateTitle.firstResult', {
+        raw: result,
+        validated,
+      });
+      if (validated) {
+        this.lastTitleGenerationFailure = null;
+        return validated;
+      }
+      this.lastTitleGenerationFailure = result
+        ? `initial mini completion rejected by validator: ${JSON.stringify(result.slice(0, 160))}`
+        : 'initial mini completion returned null';
+
+      this.debug('[generateTitle] First mini completion returned invalid/empty title, retrying with stricter title constraints');
+      const retryHint = options?.locale?.startsWith('zh')
+        ? '禁止复述用户原句，只输出概括主题的短标题。'
+        : options?.locale?.startsWith('ja')
+          ? 'ユーザーの文章を繰り返さず、主題を要約した短いタイトルだけを出力してください。'
+          : 'Do not echo the user sentence. Output only a short topic title.';
+      const retryPrompt = `${prompt}\n\n${retryHint}`;
+      this.logTitleDebug('generateTitle.retryRequest', {
+        locale: options?.locale ?? null,
+        language: options?.language ?? null,
+        retryHint,
+        prompt: retryPrompt,
+        completionOptions,
+      });
+      const retryResult = await this.runMiniCompletion(retryPrompt, completionOptions);
+      const retryValidated = validateTitle(retryResult, options);
+      this.logTitleDebug('generateTitle.retryResult', {
+        raw: retryResult,
+        validated: retryValidated,
+      });
+      if (retryValidated) {
+        this.lastTitleGenerationFailure = null;
+        return retryValidated;
+      }
+      this.lastTitleGenerationFailure = retryResult
+        ? `retry mini completion rejected by validator: ${JSON.stringify(retryResult.slice(0, 160))}`
+        : `retry mini completion returned null${this.lastTitleGenerationFailure ? ` (after ${this.lastTitleGenerationFailure})` : ''}`;
+      return null;
     } catch (error) {
+      this.lastTitleGenerationFailure = `generateTitle exception: ${error instanceof Error ? error.message : String(error)}`;
+      this.logTitleDebug('generateTitle.exception', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.debug(`[generateTitle] Failed: ${error}`);
       return null;
     }
@@ -1197,12 +1292,66 @@ ${formattedMessages}
    * @param options.language - Preferred language for the title
    * @returns Generated title (2-5 words), or null if generation fails
    */
-  async regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { language?: string }): Promise<string | null> {
+  async regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { language?: string; locale?: string }): Promise<string | null> {
+    this.lastTitleGenerationFailure = null;
     try {
       const prompt = buildRegenerateTitlePrompt(recentUserMessages, lastAssistantResponse, options);
-      const result = await this.runMiniCompletion(prompt);
-      return validateTitle(result);
+      const completionOptions = this.getTitleCompletionOptions(options);
+      this.logTitleDebug('regenerateTitle.request', {
+        locale: options?.locale ?? null,
+        language: options?.language ?? null,
+        recentUserMessages,
+        lastAssistantResponse,
+        prompt,
+        completionOptions,
+      });
+      const result = await this.runMiniCompletion(prompt, completionOptions);
+      const validated = validateTitle(result, options);
+      this.logTitleDebug('regenerateTitle.firstResult', {
+        raw: result,
+        validated,
+      });
+      if (validated) {
+        this.lastTitleGenerationFailure = null;
+        return validated;
+      }
+      this.lastTitleGenerationFailure = result
+        ? `initial mini completion rejected by validator: ${JSON.stringify(result.slice(0, 160))}`
+        : 'initial mini completion returned null';
+
+      this.debug('[regenerateTitle] First mini completion returned invalid/empty title, retrying with stricter title constraints');
+      const retryHint = options?.locale?.startsWith('zh')
+        ? '禁止复述用户原句，只输出概括主题的短标题。'
+        : options?.locale?.startsWith('ja')
+          ? 'ユーザーの文章を繰り返さず、主題を要約した短いタイトルだけを出力してください。'
+          : 'Do not echo the user sentence. Output only a short topic title.';
+      const retryPrompt = `${prompt}\n\n${retryHint}`;
+      this.logTitleDebug('regenerateTitle.retryRequest', {
+        locale: options?.locale ?? null,
+        language: options?.language ?? null,
+        retryHint,
+        prompt: retryPrompt,
+        completionOptions,
+      });
+      const retryResult = await this.runMiniCompletion(retryPrompt, completionOptions);
+      const retryValidated = validateTitle(retryResult, options);
+      this.logTitleDebug('regenerateTitle.retryResult', {
+        raw: retryResult,
+        validated: retryValidated,
+      });
+      if (retryValidated) {
+        this.lastTitleGenerationFailure = null;
+        return retryValidated;
+      }
+      this.lastTitleGenerationFailure = retryResult
+        ? `retry mini completion rejected by validator: ${JSON.stringify(retryResult.slice(0, 160))}`
+        : `retry mini completion returned null${this.lastTitleGenerationFailure ? ` (after ${this.lastTitleGenerationFailure})` : ''}`;
+      return null;
     } catch (error) {
+      this.lastTitleGenerationFailure = `regenerateTitle exception: ${error instanceof Error ? error.message : String(error)}`;
+      this.logTitleDebug('regenerateTitle.exception', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.debug(`[regenerateTitle] Failed: ${error}`);
       return null;
     }
