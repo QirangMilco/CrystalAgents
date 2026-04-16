@@ -560,7 +560,8 @@ function AppShellContent({
   const navState = useNavigationState()
 
   const isChatInterface = isSessionsNavigation(navState)
-  const isFocusModeActive = isSidebarAndNavigatorHidden && isChatInterface
+  const isFocusModeEnabled = isSidebarAndNavigatorHidden
+  const isFocusModeActive = isFocusModeEnabled && isChatInterface
   const effectiveSidebarAndNavigatorHidden = isFocusModeActive || isAutoCompact
 
   const [focusPeekPanel, setFocusPeekPanel] = React.useState<'sidebar' | 'navigator' | null>(null)
@@ -593,11 +594,15 @@ function AppShellContent({
   // Double-Esc interrupt feature: first Esc shows warning, second Esc interrupts
   const { handleEscapePress } = useEscapeInterrupt()
 
-  const showFocusPeekSidebar = isFocusModeActive && focusPeekPanel === 'sidebar'
-  const showFocusPeekNavigator = isFocusModeActive && focusPeekPanel === 'navigator'
+  const [focusActivityRailContainerMode, setFocusActivityRailContainerMode] = React.useState<'full-height' | 'content-height'>(() =>
+    storage.get(storage.KEYS.focusActivityRailContainerMode, 'full-height') as 'full-height' | 'content-height'
+  )
+  const showFocusPeekSidebar = isFocusModeEnabled && focusPeekPanel === 'sidebar'
+  const showFocusPeekNavigator = isFocusModeEnabled && focusPeekPanel === 'navigator'
   const showSessionHeaderNewChat = isSessionsNavigation(navState) && (!isSidebarVisible || isFocusModeActive) && (!effectiveSidebarAndNavigatorHidden || showFocusPeekNavigator)
-  const showFocusPeekTriggers = isFocusModeActive
+  const showFocusPeekTriggers = isFocusModeEnabled
   const ACTIVITY_RAIL_WIDTH = 48
+  const isFocusActivityRailContentHeight = focusActivityRailContainerMode === 'content-height'
   const showFocusActivityRail = showFocusPeekTriggers
   const activityRailOffset = showFocusActivityRail ? ACTIVITY_RAIL_WIDTH + PANEL_GAP : 0
   const effectiveSidebarWidth = showFocusPeekSidebar ? sidebarWidth : (effectiveSidebarAndNavigatorHidden ? 0 : (isSidebarVisible ? sidebarWidth : 0))
@@ -620,7 +625,7 @@ function AppShellContent({
   }, [clearFocusPeekTimers])
 
   const scheduleFocusPeekOpen = useCallback((panel: 'sidebar' | 'navigator') => {
-    if (!isFocusModeActive) return
+    if (!isFocusModeEnabled) return
     if (focusPeekCloseTimerRef.current !== null) {
       window.clearTimeout(focusPeekCloseTimerRef.current)
       focusPeekCloseTimerRef.current = null
@@ -634,10 +639,10 @@ function AppShellContent({
       setFocusPeekPanel(panel)
       focusPeekOpenTimerRef.current = null
     }, openDelayMs)
-  }, [isFocusModeActive])
+  }, [isFocusModeEnabled])
 
   const scheduleFocusPeekClose = useCallback(() => {
-    if (!isFocusModeActive) return
+    if (!isFocusModeEnabled) return
     if (focusPeekOpenTimerRef.current !== null) {
       window.clearTimeout(focusPeekOpenTimerRef.current)
       focusPeekOpenTimerRef.current = null
@@ -651,7 +656,7 @@ function AppShellContent({
       setFocusPeekPanel(null)
       focusPeekCloseTimerRef.current = null
     }, autoHideDelayMs)
-  }, [isFocusModeActive])
+  }, [isFocusModeEnabled])
 
   const closeFocusPeek = useCallback(() => {
     clearFocusPeekTimers()
@@ -1869,14 +1874,26 @@ function AppShellContent({
   }, [isSidebarAndNavigatorHidden])
 
   React.useEffect(() => {
-    if (!isFocusModeActive) {
+    if (!isFocusModeEnabled) {
       closeFocusPeek()
     }
-  }, [isFocusModeActive, closeFocusPeek])
+  }, [isFocusModeEnabled, closeFocusPeek])
 
   React.useEffect(() => {
     return () => clearFocusPeekTimers()
   }, [clearFocusPeekTimers])
+
+  React.useEffect(() => {
+    const handleFocusActivityRailContainerModeChange = (event: Event) => {
+      const next = (event as CustomEvent<'full-height' | 'content-height'>).detail
+      setFocusActivityRailContainerMode(next === 'content-height' ? 'content-height' : 'full-height')
+    }
+
+    window.addEventListener('craft:focus-activity-rail-container-mode-change', handleFocusActivityRailContainerModeChange)
+    return () => {
+      window.removeEventListener('craft:focus-activity-rail-container-mode-change', handleFocusActivityRailContainerModeChange)
+    }
+  }, [])
 
   // Listen for focus mode toggle from menu (View → Focus Mode)
   React.useEffect(() => {
@@ -2459,7 +2476,7 @@ function AppShellContent({
           canGoForward={canGoForward}
           onToggleSidebar={handleToggleSidebar}
           onToggleFocusMode={() => setIsSidebarAndNavigatorHidden(prev => !prev)}
-          isFocusModeEnabled={isSidebarAndNavigatorHidden}
+          isFocusModeEnabled={isFocusModeEnabled}
           onAddSessionPanel={() => handleNewChat(true)}
           onAddBrowserPanel={() => { void handleNewBrowserWindow() }}
           isCompact={isAutoCompact}
@@ -2473,8 +2490,21 @@ function AppShellContent({
       >
         {showFocusActivityRail && (
           <div
-            className="relative z-[70] shrink-0"
-            style={{ width: ACTIVITY_RAIL_WIDTH, marginTop: PANEL_STACK_VERTICAL_OVERFLOW, marginBottom: PANEL_STACK_VERTICAL_OVERFLOW }}
+            className={cn(
+              "relative z-[70] shrink-0 self-start",
+              !isFocusActivityRailContentHeight && "self-stretch"
+            )}
+            style={{
+              width: ACTIVITY_RAIL_WIDTH,
+              ...(isFocusActivityRailContentHeight
+                ? { paddingTop: PANEL_STACK_VERTICAL_OVERFLOW }
+                : {
+                    paddingTop: PANEL_STACK_VERTICAL_OVERFLOW,
+                    paddingBottom: PANEL_STACK_VERTICAL_OVERFLOW,
+                    marginTop: -PANEL_STACK_VERTICAL_OVERFLOW,
+                    marginBottom: -PANEL_STACK_VERTICAL_OVERFLOW,
+                  }),
+            }}
             onMouseEnter={() => {
               if (focusPeekCloseTimerRef.current !== null) {
                 window.clearTimeout(focusPeekCloseTimerRef.current)
@@ -2485,7 +2515,10 @@ function AppShellContent({
               scheduleFocusPeekClose()
             }}
           >
-            <div className="flex h-full flex-col items-center gap-2 rounded-[12px] border border-border/40 bg-panel/90 px-1.5 py-2 shadow-middle backdrop-blur">
+            <div className={cn(
+              "flex flex-col items-center gap-2 rounded-[12px] border border-border/40 bg-panel/90 px-1.5 py-2 shadow-middle backdrop-blur",
+              isFocusActivityRailContentHeight ? "h-auto" : "h-full"
+            )}>
               <HeaderIconButton
                 icon={<PanelLeftRounded className="h-4 w-4" />}
                 tooltip={t('menu.toggleSidebar')}

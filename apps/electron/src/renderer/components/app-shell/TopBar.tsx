@@ -257,14 +257,16 @@ export function TopBar({
         <div className="flex items-center gap-0.5">
         {!isCompact && (
         <>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TopBarButton onClick={onToggleSidebar} aria-label={t("menu.toggleSidebar")}>
-                <PanelLeftRounded className="h-[18px] w-[18px] text-foreground/70" />
-              </TopBarButton>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t("menu.toggleSidebar")}</TooltipContent>
-          </Tooltip>
+          {!isFocusModeEnabled && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TopBarButton onClick={onToggleSidebar} aria-label={t("menu.toggleSidebar")}>
+                  <PanelLeftRounded className="h-[18px] w-[18px] text-foreground/70" />
+                </TopBarButton>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t("menu.toggleSidebar")}</TooltipContent>
+            </Tooltip>
+          )}
 
           <Tooltip>
             <TooltipTrigger asChild>

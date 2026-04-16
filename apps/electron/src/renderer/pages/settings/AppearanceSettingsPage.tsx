@@ -140,6 +140,9 @@ export default function AppearanceSettingsPage() {
   const [focusPeekAutoHideDelayMs, setFocusPeekAutoHideDelayMs] = useState(() =>
     storage.get(storage.KEYS.focusPeekAutoHideDelayMs, 80)
   )
+  const [focusActivityRailContainerMode, setFocusActivityRailContainerMode] = useState<'full-height' | 'content-height'>(() =>
+    storage.get(storage.KEYS.focusActivityRailContainerMode, 'full-height')
+  )
   const handleConnectionIconsChange = useCallback((checked: boolean) => {
     setShowConnectionIcons(checked)
     storage.set(storage.KEYS.showConnectionIcons, checked)
@@ -158,6 +161,13 @@ export default function AppearanceSettingsPage() {
     setFocusPeekAutoHideDelayMs(next)
     storage.set(storage.KEYS.focusPeekAutoHideDelayMs, next)
   }, [clampFocusDelay])
+
+  const handleFocusActivityRailContainerModeChange = useCallback((value: string) => {
+    const next = value === 'content-height' ? 'content-height' : 'full-height'
+    setFocusActivityRailContainerMode(next)
+    storage.set(storage.KEYS.focusActivityRailContainerMode, next)
+    window.dispatchEvent(new CustomEvent('craft:focus-activity-rail-container-mode-change', { detail: next }))
+  }, [])
 
   // Rich tool descriptions toggle (persisted in config.json, read by SDK subprocess)
   const [richToolDescriptions, setRichToolDescriptions] = useState(true)
@@ -381,6 +391,27 @@ export default function AppearanceSettingsPage() {
                     checked={showConnectionIcons}
                     onCheckedChange={handleConnectionIconsChange}
                   />
+                  <SettingsRow
+                    label={t("settings.appearance.focusActivityRailContainerMode")}
+                    description={t("settings.appearance.focusActivityRailContainerModeDesc")}
+                  >
+                    <SettingsMenuSelect
+                      value={focusActivityRailContainerMode}
+                      onValueChange={handleFocusActivityRailContainerModeChange}
+                      options={[
+                        {
+                          value: 'full-height',
+                          label: t("settings.appearance.focusActivityRailContainerModeFullHeight"),
+                          description: t("settings.appearance.focusActivityRailContainerModeFullHeightDesc"),
+                        },
+                        {
+                          value: 'content-height',
+                          label: t("settings.appearance.focusActivityRailContainerModeContentHeight"),
+                          description: t("settings.appearance.focusActivityRailContainerModeContentHeightDesc"),
+                        },
+                      ]}
+                    />
+                  </SettingsRow>
                   <SettingsRow
                     label={t("settings.appearance.focusPeekOpenDelay")}
                     description={t("settings.appearance.focusPeekOpenDelayDesc")}
