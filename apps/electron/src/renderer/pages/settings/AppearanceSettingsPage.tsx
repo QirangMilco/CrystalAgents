@@ -32,6 +32,7 @@ import * as storage from '@/lib/local-storage'
 import { useWorkspaceIcons } from '@/hooks/useWorkspaceIcon'
 import { Info_DataTable, SortableHeader } from '@/components/info/Info_DataTable'
 import { Info_Badge } from '@/components/info/Info_Badge'
+import { Input } from '@/components/ui/input'
 import type { PresetTheme } from '@config/theme'
 
 export const meta: DetailsPageMeta = {
@@ -131,10 +132,32 @@ export default function AppearanceSettingsPage() {
   const [showConnectionIcons, setShowConnectionIcons] = useState(() =>
     storage.get(storage.KEYS.showConnectionIcons, true)
   )
+
+  // Focus mode hover panel delays (ms)
+  const [focusPeekOpenDelayMs, setFocusPeekOpenDelayMs] = useState(() =>
+    storage.get(storage.KEYS.focusPeekOpenDelayMs, 150)
+  )
+  const [focusPeekAutoHideDelayMs, setFocusPeekAutoHideDelayMs] = useState(() =>
+    storage.get(storage.KEYS.focusPeekAutoHideDelayMs, 80)
+  )
   const handleConnectionIconsChange = useCallback((checked: boolean) => {
     setShowConnectionIcons(checked)
     storage.set(storage.KEYS.showConnectionIcons, checked)
   }, [])
+
+  const clampFocusDelay = useCallback((value: number) => Math.min(600, Math.max(0, Math.round(value))), [])
+
+  const handleFocusPeekOpenDelayMsChange = useCallback((value: number) => {
+    const next = clampFocusDelay(value)
+    setFocusPeekOpenDelayMs(next)
+    storage.set(storage.KEYS.focusPeekOpenDelayMs, next)
+  }, [clampFocusDelay])
+
+  const handleFocusPeekAutoHideDelayMsChange = useCallback((value: number) => {
+    const next = clampFocusDelay(value)
+    setFocusPeekAutoHideDelayMs(next)
+    storage.set(storage.KEYS.focusPeekAutoHideDelayMs, next)
+  }, [clampFocusDelay])
 
   // Rich tool descriptions toggle (persisted in config.json, read by SDK subprocess)
   const [richToolDescriptions, setRichToolDescriptions] = useState(true)
@@ -358,6 +381,48 @@ export default function AppearanceSettingsPage() {
                     checked={showConnectionIcons}
                     onCheckedChange={handleConnectionIconsChange}
                   />
+                  <SettingsRow
+                    label={t("settings.appearance.focusPeekOpenDelay")}
+                    description={t("settings.appearance.focusPeekOpenDelayDesc")}
+                  >
+                    <div className="flex items-center gap-2 w-[180px]">
+                      <Input
+                        type="number"
+                        min={0}
+                        max={600}
+                        step={1}
+                        value={focusPeekOpenDelayMs}
+                        onChange={(e) => {
+                          const next = Number(e.target.value)
+                          if (Number.isFinite(next)) handleFocusPeekOpenDelayMsChange(next)
+                        }}
+                        className="h-8"
+                        aria-label={t("settings.appearance.focusPeekOpenDelay")}
+                      />
+                      <span className="text-xs text-muted-foreground">ms</span>
+                    </div>
+                  </SettingsRow>
+                  <SettingsRow
+                    label={t("settings.appearance.focusPeekAutoHideDelay")}
+                    description={t("settings.appearance.focusPeekAutoHideDelayDesc")}
+                  >
+                    <div className="flex items-center gap-2 w-[180px]">
+                      <Input
+                        type="number"
+                        min={0}
+                        max={600}
+                        step={1}
+                        value={focusPeekAutoHideDelayMs}
+                        onChange={(e) => {
+                          const next = Number(e.target.value)
+                          if (Number.isFinite(next)) handleFocusPeekAutoHideDelayMsChange(next)
+                        }}
+                        className="h-8"
+                        aria-label={t("settings.appearance.focusPeekAutoHideDelay")}
+                      />
+                      <span className="text-xs text-muted-foreground">ms</span>
+                    </div>
+                  </SettingsRow>
                   <SettingsToggle
                     label={t("settings.appearance.richToolDescriptions")}
                     description={t("settings.appearance.richToolDescriptionsDesc")}

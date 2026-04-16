@@ -25,6 +25,8 @@ export const KEYS = {
 
   // Focus mode
   focusModeEnabled: 'focus-mode-enabled',
+  focusPeekOpenDelayMs: 'focus-peek-open-delay-ms',
+  focusPeekAutoHideDelayMs: 'focus-peek-auto-hide-delay-ms',
 
   // Session files panel state
   sessionFilesExpandedFolders: 'session-files-expanded', // Expanded folders in session files tree (keyed by sessionId)

@@ -36,6 +36,8 @@ import {
 import { SourceAvatar } from "@/components/ui/source-avatar"
 import { TopBar } from "./TopBar"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
+import { PanelLeftRounded } from "../icons/PanelLeftRounded"
+import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { McpIcon } from "../icons/McpIcon"
 import { cn } from "@/lib/utils"
 import { isMac } from "@/lib/platform"
@@ -553,7 +555,17 @@ function AppShellContent({
   const MOBILE_THRESHOLD = 768
   const isAutoCompact = shellWidth > 0 && shellWidth < MOBILE_THRESHOLD
 
-  const effectiveSidebarAndNavigatorHidden = isSidebarAndNavigatorHidden || isAutoCompact
+  // UNIFIED NAVIGATION STATE - single source of truth from NavigationContext
+  // Derived from focused panel's route — all panels are peers
+  const navState = useNavigationState()
+
+  const isChatInterface = isSessionsNavigation(navState)
+  const isFocusModeActive = isSidebarAndNavigatorHidden && isChatInterface
+  const effectiveSidebarAndNavigatorHidden = isFocusModeActive || isAutoCompact
+
+  const [focusPeekPanel, setFocusPeekPanel] = React.useState<'sidebar' | 'navigator' | null>(null)
+  const focusPeekOpenTimerRef = useRef<number | null>(null)
+  const focusPeekCloseTimerRef = useRef<number | null>(null)
 
   // What's New overlay
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
@@ -581,9 +593,81 @@ function AppShellContent({
   // Double-Esc interrupt feature: first Esc shows warning, second Esc interrupts
   const { handleEscapePress } = useEscapeInterrupt()
 
-  // UNIFIED NAVIGATION STATE - single source of truth from NavigationContext
-  // Derived from focused panel's route — all panels are peers
-  const navState = useNavigationState()
+  const showFocusPeekSidebar = isFocusModeActive && focusPeekPanel === 'sidebar'
+  const showFocusPeekNavigator = isFocusModeActive && focusPeekPanel === 'navigator'
+  const showSessionHeaderNewChat = isSessionsNavigation(navState) && (!isSidebarVisible || isFocusModeActive) && (!effectiveSidebarAndNavigatorHidden || showFocusPeekNavigator)
+  const showFocusPeekTriggers = isFocusModeActive
+  const ACTIVITY_RAIL_WIDTH = 48
+  const showFocusActivityRail = showFocusPeekTriggers
+  const activityRailOffset = showFocusActivityRail ? ACTIVITY_RAIL_WIDTH + PANEL_GAP : 0
+  const effectiveSidebarWidth = showFocusPeekSidebar ? sidebarWidth : (effectiveSidebarAndNavigatorHidden ? 0 : (isSidebarVisible ? sidebarWidth : 0))
+  const effectiveNavigatorWidth = showFocusPeekNavigator ? sessionListWidth : (isAutoCompact ? sessionListWidth : (effectiveSidebarAndNavigatorHidden ? 0 : sessionListWidth))
+
+  const clearFocusPeekTimers = useCallback(() => {
+    if (focusPeekOpenTimerRef.current !== null) {
+      window.clearTimeout(focusPeekOpenTimerRef.current)
+      focusPeekOpenTimerRef.current = null
+    }
+    if (focusPeekCloseTimerRef.current !== null) {
+      window.clearTimeout(focusPeekCloseTimerRef.current)
+      focusPeekCloseTimerRef.current = null
+    }
+  }, [])
+
+  const openFocusPeek = useCallback((panel: 'sidebar' | 'navigator') => {
+    clearFocusPeekTimers()
+    setFocusPeekPanel(panel)
+  }, [clearFocusPeekTimers])
+
+  const scheduleFocusPeekOpen = useCallback((panel: 'sidebar' | 'navigator') => {
+    if (!isFocusModeActive) return
+    if (focusPeekCloseTimerRef.current !== null) {
+      window.clearTimeout(focusPeekCloseTimerRef.current)
+      focusPeekCloseTimerRef.current = null
+    }
+    if (focusPeekOpenTimerRef.current !== null) {
+      window.clearTimeout(focusPeekOpenTimerRef.current)
+    }
+    const openDelayRaw = storage.get(storage.KEYS.focusPeekOpenDelayMs, 150)
+    const openDelayMs = Number.isFinite(openDelayRaw) ? Math.min(600, Math.max(0, Math.round(openDelayRaw))) : 150
+    focusPeekOpenTimerRef.current = window.setTimeout(() => {
+      setFocusPeekPanel(panel)
+      focusPeekOpenTimerRef.current = null
+    }, openDelayMs)
+  }, [isFocusModeActive])
+
+  const scheduleFocusPeekClose = useCallback(() => {
+    if (!isFocusModeActive) return
+    if (focusPeekOpenTimerRef.current !== null) {
+      window.clearTimeout(focusPeekOpenTimerRef.current)
+      focusPeekOpenTimerRef.current = null
+    }
+    if (focusPeekCloseTimerRef.current !== null) {
+      window.clearTimeout(focusPeekCloseTimerRef.current)
+    }
+    const autoHideDelayRaw = storage.get(storage.KEYS.focusPeekAutoHideDelayMs, 80)
+    const autoHideDelayMs = Number.isFinite(autoHideDelayRaw) ? Math.min(600, Math.max(0, Math.round(autoHideDelayRaw))) : 80
+    focusPeekCloseTimerRef.current = window.setTimeout(() => {
+      setFocusPeekPanel(null)
+      focusPeekCloseTimerRef.current = null
+    }, autoHideDelayMs)
+  }, [isFocusModeActive])
+
+  const closeFocusPeek = useCallback(() => {
+    clearFocusPeekTimers()
+    setFocusPeekPanel(null)
+  }, [clearFocusPeekTimers])
+
+  const handleFocusPeekTriggerKeyDown = useCallback((event: React.KeyboardEvent, panel: 'sidebar' | 'navigator') => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openFocusPeek(panel)
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeFocusPeek()
+    }
+  }, [closeFocusPeek, openFocusPeek])
 
   const store = useStore()
   const panelStack = useAtomValue(panelStackAtom)
@@ -1370,16 +1454,20 @@ function AppShellContent({
     if (!isResizing) return
 
     const handleMouseMove = (e: MouseEvent) => {
+      const shellRect = shellRef.current?.getBoundingClientRect()
+      const relativeX = shellRect ? (e.clientX - shellRect.left) : e.clientX
+      const railOffset = showFocusActivityRail ? ACTIVITY_RAIL_WIDTH + PANEL_GAP : 0
+
       if (isResizing === 'sidebar') {
-        const newWidth = Math.min(Math.max(e.clientX, 180), 320)
+        const newWidth = Math.min(Math.max(relativeX - railOffset, 180), 320)
         setSidebarWidth(newWidth)
         if (resizeHandleRef.current) {
           const rect = resizeHandleRef.current.getBoundingClientRect()
           setSidebarHandleY(e.clientY - rect.top)
         }
       } else if (isResizing === 'session-list') {
-        const offset = isSidebarVisible ? sidebarWidth : 0
-        const newWidth = Math.min(Math.max(e.clientX - offset, 240), 480)
+        const offset = railOffset + (effectiveSidebarWidth > 0 ? effectiveSidebarWidth + PANEL_GAP : PANEL_EDGE_INSET)
+        const newWidth = Math.min(Math.max(relativeX - offset, 240), 480)
         setSessionListWidth(newWidth)
         if (sessionListHandleRef.current) {
           const rect = sessionListHandleRef.current.getBoundingClientRect()
@@ -1411,6 +1499,8 @@ function AppShellContent({
     sidebarWidth,
     sessionListWidth,
     isSidebarVisible,
+    showFocusActivityRail,
+    effectiveSidebarWidth,
   ])
 
   // Spring transition config - shared between sidebar and header
@@ -1777,6 +1867,16 @@ function AppShellContent({
   React.useEffect(() => {
     storage.set(storage.KEYS.focusModeEnabled, isSidebarAndNavigatorHidden)
   }, [isSidebarAndNavigatorHidden])
+
+  React.useEffect(() => {
+    if (!isFocusModeActive) {
+      closeFocusPeek()
+    }
+  }, [isFocusModeActive, closeFocusPeek])
+
+  React.useEffect(() => {
+    return () => clearFocusPeekTimers()
+  }, [clearFocusPeekTimers])
 
   // Listen for focus mode toggle from menu (View → Focus Mode)
   React.useEffect(() => {
@@ -2359,6 +2459,7 @@ function AppShellContent({
           canGoForward={canGoForward}
           onToggleSidebar={handleToggleSidebar}
           onToggleFocusMode={() => setIsSidebarAndNavigatorHidden(prev => !prev)}
+          isFocusModeEnabled={isSidebarAndNavigatorHidden}
           onAddSessionPanel={() => handleNewChat(true)}
           onAddBrowserPanel={() => { void handleNewBrowserWindow() }}
           isCompact={isAutoCompact}
@@ -2370,7 +2471,45 @@ function AppShellContent({
         className="flex items-stretch relative"
         style={{ height: '100%', paddingRight: PANEL_EDGE_INSET, paddingBottom: PANEL_EDGE_INSET, paddingLeft: 0, gap: PANEL_GAP }}
       >
-        <PanelStackContainer
+        {showFocusActivityRail && (
+          <div
+            className="relative z-[70] shrink-0"
+            style={{ width: ACTIVITY_RAIL_WIDTH, marginTop: PANEL_STACK_VERTICAL_OVERFLOW, marginBottom: PANEL_STACK_VERTICAL_OVERFLOW }}
+            onMouseEnter={() => {
+              if (focusPeekCloseTimerRef.current !== null) {
+                window.clearTimeout(focusPeekCloseTimerRef.current)
+                focusPeekCloseTimerRef.current = null
+              }
+            }}
+            onMouseLeave={() => {
+              scheduleFocusPeekClose()
+            }}
+          >
+            <div className="flex h-full flex-col items-center gap-2 rounded-[12px] border border-border/40 bg-panel/90 px-1.5 py-2 shadow-middle backdrop-blur">
+              <HeaderIconButton
+                icon={<PanelLeftRounded className="h-4 w-4" />}
+                tooltip={t('menu.toggleSidebar')}
+                aria-label={t('menu.toggleSidebar')}
+                className={cn("h-9 w-9 rounded-[10px]", showFocusPeekSidebar && "bg-foreground/6 text-foreground")}
+                onMouseEnter={() => scheduleFocusPeekOpen('sidebar')}
+                onFocus={() => openFocusPeek('sidebar')}
+                onKeyDown={(e) => handleFocusPeekTriggerKeyDown(e, 'sidebar')}
+              />
+              <HeaderIconButton
+                icon={<PanelRightRounded className="h-4 w-4" />}
+                tooltip={t('sidebar.allSessions')}
+                aria-label={t('sidebar.allSessions')}
+                className={cn("h-9 w-9 rounded-[10px]", showFocusPeekNavigator && "bg-foreground/6 text-foreground")}
+                onMouseEnter={() => scheduleFocusPeekOpen('navigator')}
+                onFocus={() => openFocusPeek('navigator')}
+                onKeyDown={(e) => handleFocusPeekTriggerKeyDown(e, 'navigator')}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="relative flex h-full min-w-0 flex-1">
+          <PanelStackContainer
           sidebarSlot={
             <div
               ref={sidebarRef}
@@ -2379,6 +2518,15 @@ function AppShellContent({
               data-focus-zone="sidebar"
               tabIndex={sidebarFocused ? 0 : -1}
               onKeyDown={handleSidebarKeyDown}
+              onMouseEnter={() => {
+                if (focusPeekCloseTimerRef.current !== null) {
+                  window.clearTimeout(focusPeekCloseTimerRef.current)
+                  focusPeekCloseTimerRef.current = null
+                }
+              }}
+              onMouseLeave={() => {
+                if (showFocusPeekSidebar) scheduleFocusPeekClose()
+              }}
             >
             <div className="flex h-full flex-col select-none">
               {/* Sidebar Top Section */}
@@ -2658,11 +2806,20 @@ function AppShellContent({
             </div>
           </div>
           }
-          sidebarWidth={effectiveSidebarAndNavigatorHidden ? 0 : (isSidebarVisible ? sidebarWidth : 0)}
+          sidebarWidth={effectiveSidebarWidth}
           navigatorSlot={
             <div
               style={{ width: isAutoCompact ? '100%' : sessionListWidth }}
               className="h-full flex flex-col min-w-0 relative z-panel"
+              onMouseEnter={() => {
+                if (focusPeekCloseTimerRef.current !== null) {
+                  window.clearTimeout(focusPeekCloseTimerRef.current)
+                  focusPeekCloseTimerRef.current = null
+                }
+              }}
+              onMouseLeave={() => {
+                if (showFocusPeekNavigator) scheduleFocusPeekClose()
+              }}
             >
             <PanelHeader
               title={isSidebarVisible ? listTitle : undefined}
@@ -2686,6 +2843,14 @@ function AppShellContent({
                       Pinned filters: state views pin a status, label views pin a label, flagged pins the flag. */}
                   {isSessionsNavigation(navState) && (
                     <>
+                      {showSessionHeaderNewChat && (
+                        <HeaderIconButton
+                          icon={<Plus className="h-4 w-4" />}
+                          tooltip={t('session.newSession')}
+                          aria-label={t('session.newSession')}
+                          onClick={() => handleNewChat()}
+                        />
+                      )}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <HeaderIconButton
@@ -3413,7 +3578,7 @@ function AppShellContent({
             )}
             </div>
           }
-          navigatorWidth={isAutoCompact ? sessionListWidth : (effectiveSidebarAndNavigatorHidden ? 0 : sessionListWidth)}
+          navigatorWidth={effectiveNavigatorWidth}
           isSidebarAndNavigatorHidden={effectiveSidebarAndNavigatorHidden}
           isRightSidebarVisible={false}
           isCompact={isAutoCompact}
@@ -3437,9 +3602,9 @@ function AppShellContent({
             width: PANEL_SASH_HIT_WIDTH,
             top: PANEL_STACK_VERTICAL_OVERFLOW,
             bottom: PANEL_STACK_VERTICAL_OVERFLOW,
-            left: isSidebarVisible
-              ? sidebarWidth + (PANEL_GAP / 2) - PANEL_SASH_HALF_HIT_WIDTH
-              : -PANEL_GAP,
+            left: activityRailOffset + (effectiveSidebarWidth > 0
+              ? effectiveSidebarWidth + (PANEL_GAP / 2) - PANEL_SASH_HALF_HIT_WIDTH
+              : -PANEL_GAP),
             transition: isResizing === 'sidebar' ? undefined : 'left 0.15s ease-out',
           }}
         >
@@ -3471,8 +3636,9 @@ function AppShellContent({
             top: PANEL_STACK_VERTICAL_OVERFLOW,
             bottom: PANEL_STACK_VERTICAL_OVERFLOW,
             left:
-              (isSidebarVisible ? sidebarWidth + PANEL_GAP : PANEL_EDGE_INSET) +
-              sessionListWidth +
+              activityRailOffset +
+              (effectiveSidebarWidth > 0 ? effectiveSidebarWidth + PANEL_GAP : PANEL_EDGE_INSET) +
+              effectiveNavigatorWidth +
               (PANEL_GAP / 2) -
               PANEL_SASH_HALF_HIT_WIDTH,
             transition: isResizing === 'session-list' ? undefined : 'left 0.15s ease-out',
@@ -3487,6 +3653,7 @@ function AppShellContent({
           />
         </div>
         )}
+        </div>
 
       </div>
 
@@ -3509,7 +3676,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
+                style={{ left: activityRailOffset + effectiveSidebarWidth + 20, top: editPopoverAnchorY.current }}
                 aria-hidden="true"
               />
             }
@@ -3529,7 +3696,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
+                style={{ left: activityRailOffset + effectiveSidebarWidth + 20, top: editPopoverAnchorY.current }}
                 aria-hidden="true"
               />
             }
@@ -3565,7 +3732,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
+                style={{ left: activityRailOffset + effectiveSidebarWidth + 20, top: editPopoverAnchorY.current }}
                 aria-hidden="true"
               />
             }
@@ -3589,7 +3756,7 @@ function AppShellContent({
               trigger={
                 <div
                   className="fixed w-0 h-0 pointer-events-none"
-                  style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
+                  style={{ left: activityRailOffset + effectiveSidebarWidth + 20, top: editPopoverAnchorY.current }}
                   aria-hidden="true"
                 />
               }
@@ -3606,7 +3773,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
+                style={{ left: activityRailOffset + effectiveSidebarWidth + 20, top: editPopoverAnchorY.current }}
                 aria-hidden="true"
               />
             }
@@ -3622,7 +3789,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
+                style={{ left: activityRailOffset + effectiveSidebarWidth + 20, top: editPopoverAnchorY.current }}
                 aria-hidden="true"
               />
             }
@@ -3638,7 +3805,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
+                style={{ left: activityRailOffset + effectiveSidebarWidth + 20, top: editPopoverAnchorY.current }}
                 aria-hidden="true"
               />
             }

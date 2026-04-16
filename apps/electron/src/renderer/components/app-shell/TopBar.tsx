@@ -158,6 +158,7 @@ interface TopBarProps {
   canGoForward: boolean
   onToggleSidebar: () => void
   onToggleFocusMode: () => void
+  isFocusModeEnabled: boolean
   onAddSessionPanel: () => void
   onAddBrowserPanel: () => void
   /** When true, hides controls that don't apply in compact/mobile layout */
@@ -184,6 +185,7 @@ export function TopBar({
   canGoForward,
   onToggleSidebar,
   onToggleFocusMode,
+  isFocusModeEnabled,
   onAddSessionPanel,
   onAddBrowserPanel,
   isCompact,
@@ -254,14 +256,29 @@ export function TopBar({
       <div className="pointer-events-auto flex min-w-0 flex-1 items-center gap-0.5" style={{ paddingLeft: menuLeftPadding }}>
         <div className="flex items-center gap-0.5">
         {!isCompact && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <TopBarButton onClick={onToggleSidebar} aria-label="Toggle sidebar">
-              <PanelLeftRounded className="h-[18px] w-[18px] text-foreground/70" />
-            </TopBarButton>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t("menu.toggleSidebar")}</TooltipContent>
-        </Tooltip>
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <TopBarButton onClick={onToggleSidebar} aria-label={t("menu.toggleSidebar")}>
+                <PanelLeftRounded className="h-[18px] w-[18px] text-foreground/70" />
+              </TopBarButton>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t("menu.toggleSidebar")}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <TopBarButton
+                onClick={onToggleFocusMode}
+                isActive={isFocusModeEnabled}
+                aria-label={t("menu.toggleFocusMode")}
+              >
+                <Icons.Focus className="h-[17px] w-[17px] text-foreground/70" strokeWidth={1.7} />
+              </TopBarButton>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t("menu.toggleFocusMode")}</TooltipContent>
+          </Tooltip>
+        </>
         )}
 
         {/* Craft Menu */}
