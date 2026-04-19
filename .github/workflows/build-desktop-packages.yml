@@ -110,8 +110,8 @@ jobs:
           name: desktop-macos-all
           if-no-files-found: error
           path: |
-            apps/electron/release/**/Craft-Agents-*.dmg
-            apps/electron/release/**/Craft-Agents-*.zip
+            apps/electron/release/**/Crystal-Agents-*.dmg
+            apps/electron/release/**/Crystal-Agents-*.zip
             apps/electron/release/**/latest*.yml
             apps/electron/release/**/latest*.json
             apps/electron/release/**/latest*.blockmap
