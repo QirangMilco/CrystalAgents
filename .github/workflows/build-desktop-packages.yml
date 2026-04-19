@@ -104,14 +104,20 @@ jobs:
         shell: bash
         run: bash scripts/build-dmg.sh arm64 --no-sign
 
-      - name: Upload macOS artifacts (all dmg/zip)
+      - name: Upload macOS arm64 artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-macos-all
+          name: desktop-macos-arm64
           if-no-files-found: error
           path: |
-            apps/electron/release/**/Crystal-Agents-*.dmg
-            apps/electron/release/**/Crystal-Agents-*.zip
-            apps/electron/release/**/latest*.yml
-            apps/electron/release/**/latest*.json
-            apps/electron/release/**/latest*.blockmap
+            apps/electron/release/**/Crystal-Agents-arm64.dmg
+            apps/electron/release/**/Crystal-Agents-arm64.zip
+
+      - name: Upload macOS x64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-x64
+          if-no-files-found: error
+          path: |
+            apps/electron/release/**/Crystal-Agents-x64.dmg
+            apps/electron/release/**/Crystal-Agents-x64.zip
