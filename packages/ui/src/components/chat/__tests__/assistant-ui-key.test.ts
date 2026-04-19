@@ -16,8 +16,11 @@ function makeAssistantTurn(overrides: Partial<AssistantTurn> = {}): AssistantTur
 }
 
 describe('getAssistantTurnUiKey', () => {
-  it('uses response message id when available', () => {
+  it('uses a stable turn-level key for activity turns', () => {
     const turn = makeAssistantTurn({
+      activities: [{ id: 'tool-1', type: 'tool', status: 'completed', timestamp: 1 } as AssistantTurn['activities'][number]],
+      turnId: 'pi-turn-1',
+      timestamp: 555,
       response: {
         text: 'Done',
         isStreaming: false,
@@ -25,18 +28,39 @@ describe('getAssistantTurnUiKey', () => {
       },
     })
 
-    expect(getAssistantTurnUiKey(turn, 0)).toBe('assistant:msg:msg-final-1')
+    expect(getAssistantTurnUiKey(turn, 0)).toBe('assistant:turn:pi-turn-1:555')
   })
 
-  it('disambiguates split cards with same turnId/timestamp via index fallback', () => {
-    const turnA = makeAssistantTurn({ turnId: 'pi-turn-1', timestamp: 555 })
-    const turnB = makeAssistantTurn({ turnId: 'pi-turn-1', timestamp: 555 })
+  it('uses the same turn-level key for response-only turns', () => {
+    const turn = makeAssistantTurn({
+      turnId: 'pi-turn-1',
+      timestamp: 555,
+      response: {
+        text: 'Done',
+        isStreaming: false,
+        messageId: 'msg-final-1',
+      },
+    })
 
-    const keyA = getAssistantTurnUiKey(turnA, 2)
-    const keyB = getAssistantTurnUiKey(turnB, 3)
+    expect(getAssistantTurnUiKey(turn, 0)).toBe('assistant:turn:pi-turn-1:555')
+  })
 
-    expect(keyA).not.toBe(keyB)
-    expect(keyA).toBe('assistant:turn:pi-turn-1:555:2')
-    expect(keyB).toBe('assistant:turn:pi-turn-1:555:3')
+  it('does not depend on list index or activity ordering', () => {
+    const turn = makeAssistantTurn({
+      activities: [{ id: 'tool-1', type: 'tool', status: 'completed', timestamp: 1 } as AssistantTurn['activities'][number]],
+      turnId: 'pi-turn-1',
+      timestamp: 555,
+    })
+    const reorderedTurn = makeAssistantTurn({
+      activities: [{ id: 'tool-2', type: 'tool', status: 'completed', timestamp: 2 } as AssistantTurn['activities'][number]],
+      turnId: 'pi-turn-1',
+      timestamp: 555,
+    })
+
+    const keyA = getAssistantTurnUiKey(turn, 2)
+    const keyB = getAssistantTurnUiKey(reorderedTurn, 3)
+
+    expect(keyA).toBe('assistant:turn:pi-turn-1:555')
+    expect(keyB).toBe(keyA)
   })
 })

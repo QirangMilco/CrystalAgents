@@ -657,6 +657,10 @@ async function requestPreToolUseApproval(
 ): Promise<Record<string, unknown>> {
   const requestId = `pi-ptu-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+  if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+    debugLog(`[tool-title-debug][subprocess] pre_tool_use_request ${sdkToolName} (${toolCallId ?? 'no-call-id'}) keys=${Object.keys(input).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0}`);
+  }
+
   send({
     type: 'pre_tool_use_request',
     requestId,
@@ -769,12 +773,15 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
 function buildProxyTools(): AgentTool<any>[] {
   debugLog(`Building proxy tools from ${proxyToolDefs.length} definitions: ${proxyToolDefs.map(t => t.name).join(', ')}`);
 
-  return proxyToolDefs.map(def => ({
-    name: def.name,
-    label: def.name
+  return proxyToolDefs.map(def => {
+    const label = def.name
       .replace(/^mcp__.*?__/, '')
       .replace(/_/g, ' ')
-      .replace(/([a-z])([A-Z])/g, '$1 $2'),
+      .replace(/([a-z])([A-Z])/g, '$1 $2');
+
+    return {
+    name: def.name,
+    label,
     description: def.description,
     // Pi SDK omits tools without promptSnippet from the system prompt's
     // "Available tools" section, making them invisible to the LLM.
@@ -801,7 +808,7 @@ function buildProxyTools(): AgentTool<any>[] {
         };
       }
 
-      const inputObj = params as Record<string, unknown>;
+      const inputObj = { ...(params as Record<string, unknown>) };
 
       // Permission checking via main process
       const approvedInput = await requestPreToolUseApproval(def.name, inputObj, toolCallId);
@@ -825,7 +832,8 @@ function buildProxyTools(): AgentTool<any>[] {
         details: result.isError ? { isError: true } : undefined,
       };
     },
-  }));
+  };
+  });
 }
 
 // ============================================================
@@ -1308,6 +1316,16 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
 }
 
 function handleRegisterTools(msg: Extract<InboundMessage, { type: 'register_tools' }>): void {
+  if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+    for (const tool of msg.tools) {
+      if (!tool.name.startsWith('mcp__session__')) continue;
+      const properties = (tool.inputSchema && typeof tool.inputSchema === 'object'
+        ? (tool.inputSchema as { properties?: Record<string, unknown> }).properties
+        : undefined) ?? {};
+      debugLog(`[tool-title-debug][subprocess] register_tool ${tool.name} hasDisplayNameSchema=${'_displayName' in properties ? 1 : 0} hasIntentSchema=${'_intent' in properties ? 1 : 0} propertyKeys=${Object.keys(properties).sort().join(',') || '∅'}`);
+    }
+  }
+
   // Merge: replace existing tools by name, add new ones
   const incoming = new Map(msg.tools.map(t => [t.name, t]));
   proxyToolDefs = [

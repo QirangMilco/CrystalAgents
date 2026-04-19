@@ -8,11 +8,27 @@
 
 import { existsSync, readFileSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
+import type { SourceConfig } from './types.ts';
+
+function resolveWorkspaceDataDirName(): string {
+  const fallback = '.craft-agents';
+  const variantPath = process.env.CRAFT_APP_VARIANT_PATH || join(process.cwd(), 'apps', 'electron', 'resources', 'app-variant.json');
+  try {
+    if (!existsSync(variantPath)) return fallback;
+    const variant = JSON.parse(readFileSync(variantPath, 'utf-8')) as { workspaceDataDirName?: unknown };
+    return typeof variant.workspaceDataDirName === 'string' && variant.workspaceDataDirName.trim()
+      ? variant.workspaceDataDirName.trim()
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const WORKSPACE_DATA_DIR = resolveWorkspaceDataDirName();
 
 function getWorkspaceDataPath(workspaceRootPath: string): string {
-  return join(workspaceRootPath, '.craft-agents');
+  return join(workspaceRootPath, WORKSPACE_DATA_DIR);
 }
-import type { SourceConfig } from './types.ts';
 
 /** Strip UTF-8 BOM that breaks JSON.parse */
 function stripBom(text: string): string {

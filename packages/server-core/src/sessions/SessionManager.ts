@@ -6120,6 +6120,8 @@ export class SessionManager implements ISessionManager {
           toolDisplayMeta = await resolveToolDisplayMeta(event.toolName, formattedToolInput, workspaceRootPath, allSources)
         }
 
+        const debugToolTitles = process.env.CRAFT_DEBUG_TOOL_TITLES === '1'
+
         // Check if a message with this toolUseId already exists FIRST
         // SDK sends two events per tool: first from stream_event (empty input),
         // second from assistant message (complete input)
@@ -6136,6 +6138,9 @@ export class SessionManager implements ISessionManager {
         let shouldSendEvent = !isDuplicateEvent
 
         if (existingStartMsg) {
+          if (debugToolTitles) {
+            sessionLog.info(`[tool-title-debug][main] duplicate tool_start received: toolUseId=${event.toolUseId} incomingToolName=${event.toolName} incomingDisplayName=${event.displayName ?? '∅'} incomingIntent=${event.intent ?? '∅'} existingToolName=${existingStartMsg.toolName ?? '∅'} existingDisplayName=${existingStartMsg.toolDisplayName ?? '∅'} existingIntent=${existingStartMsg.toolIntent ?? '∅'} existingHasMeta=${existingStartMsg.toolDisplayMeta ? '1' : '0'}`)
+          }
           // Update existing message with complete input (second event has full input)
           if (formattedToolInput && Object.keys(formattedToolInput).length > 0) {
             const hadInputBefore = existingStartMsg.toolInput && Object.keys(existingStartMsg.toolInput).length > 0
@@ -6148,18 +6153,22 @@ export class SessionManager implements ISessionManager {
           // Also set parent if not already set
           if (parentToolUseId && !existingStartMsg.parentToolUseId) {
             existingStartMsg.parentToolUseId = parentToolUseId
+            shouldSendEvent = true
           }
           // Set toolDisplayMeta if not already set (has base64 icon for viewer)
           if (toolDisplayMeta && !existingStartMsg.toolDisplayMeta) {
             existingStartMsg.toolDisplayMeta = toolDisplayMeta
+            shouldSendEvent = true
           }
           // Update toolIntent if not already set (second event has intent from complete input)
           if (event.intent && !existingStartMsg.toolIntent) {
             existingStartMsg.toolIntent = event.intent
+            shouldSendEvent = true
           }
           // Update toolDisplayName if not already set
           if (event.displayName && !existingStartMsg.toolDisplayName) {
             existingStartMsg.toolDisplayName = event.displayName
+            shouldSendEvent = true
           }
         } else {
           // Add tool message immediately (will be updated on tool_result)
@@ -6205,6 +6214,9 @@ export class SessionManager implements ISessionManager {
         // Send event to renderer on first occurrence OR when input data is updated
         if (shouldSendEvent) {
           const timestamp = existingStartMsg?.timestamp ?? this.monotonic()
+          if (debugToolTitles) {
+            sessionLog.info(`[tool-title-debug][main] send tool_start: toolUseId=${event.toolUseId} toolName=${event.toolName} toolDisplayName=${event.displayName ?? '∅'} toolIntent=${event.intent ?? '∅'} hasDisplayMeta=${toolDisplayMeta ? '1' : '0'} duplicate=${isDuplicateEvent ? '1' : '0'} timestamp=${timestamp}`)
+          }
           this.sendEvent({
             type: 'tool_start',
             sessionId,
@@ -6218,6 +6230,8 @@ export class SessionManager implements ISessionManager {
             parentToolUseId,
             timestamp,
           }, workspaceId)
+        } else if (debugToolTitles) {
+          sessionLog.info(`[tool-title-debug][main] suppressed tool_start update: toolUseId=${event.toolUseId} toolName=${event.toolName} incomingDisplayName=${event.displayName ?? '∅'} incomingIntent=${event.intent ?? '∅'}`)
         }
         break
       }

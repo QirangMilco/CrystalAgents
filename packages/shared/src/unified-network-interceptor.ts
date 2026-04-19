@@ -169,7 +169,13 @@ function captureMetadataFromInput(toolId: string, toolName: string, parsed: Reco
   if (intent || displayName) {
     toolMetadataStore.set(toolId, { intent, displayName, timestamp: Date.now() });
     debugLog(`[SSE] Stored metadata for ${toolName} (${toolId}): intent=${!!intent}, displayName=${!!displayName}`);
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      console.error(`[tool-title-debug][interceptor] store tool=${toolName} id=${toolId} hasDisplayName=${displayName ? 1 : 0} hasIntent=${intent ? 1 : 0} keys=${Object.keys(parsed).sort().join(',') || '∅'}`);
+    }
     return true;
+  }
+  if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+    console.error(`[tool-title-debug][interceptor] store-skip tool=${toolName} id=${toolId} hasDisplayName=0 hasIntent=0 keys=${Object.keys(parsed).sort().join(',') || '∅'}`);
   }
   return false;
 }
@@ -790,6 +796,9 @@ export function createOpenAiSseStrippingStream(): TransformStream<Uint8Array, Ui
 
       try {
         const parsed = JSON.parse(tc.arguments);
+        if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+          console.error(`[tool-title-debug][interceptor] openai flush tool=${tc.name} id=${tc.id} rawKeys=${Object.keys(parsed).sort().join(',') || '∅'} rawHasDisplayName=${typeof parsed._displayName === 'string' ? 1 : 0} rawHasIntent=${typeof parsed._intent === 'string' ? 1 : 0}`);
+        }
         captureMetadataFromInput(tc.id, tc.name, parsed);
         delete parsed._intent;
         delete parsed._displayName;
@@ -886,6 +895,9 @@ export function createOpenAiSseStrippingStream(): TransformStream<Uint8Array, Ui
             toolIndex,
             arguments: tc.function?.arguments || '',
           });
+          if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+            console.error(`[tool-title-debug][interceptor] openai track-start tool=${tc.function?.name || 'unknown'} id=${tc.id} choice=${choiceIndex} index=${toolIndex} argChunkLen=${(tc.function?.arguments || '').length}`);
+          }
           bufferingToolCalls = true;
 
           // Emit the initial tool_call event WITHOUT arguments (preserves id/name/type)
@@ -912,6 +924,9 @@ export function createOpenAiSseStrippingStream(): TransformStream<Uint8Array, Ui
           const existing = trackedCalls.get(key);
           if (existing && tc.function?.arguments) {
             existing.arguments += tc.function.arguments;
+            if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+              console.error(`[tool-title-debug][interceptor] openai track-append tool=${existing.name} id=${existing.id} choice=${choiceIndex} index=${toolIndex} totalArgLen=${existing.arguments.length}`);
+            }
           }
         }
       }
@@ -1022,6 +1037,12 @@ const openAiAdapter: ApiAdapter = {
 
     if (modifiedCount > 0) {
       debugLog(`[OpenAI Schema] Added _intent and _displayName to ${modifiedCount} tools`);
+    }
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      const toolNames = tools
+        .filter(tool => tool.type === 'function')
+        .map(tool => tool.function?.name || 'unknown');
+      console.error(`[tool-title-debug][interceptor] openai schema modified=${modifiedCount} tools=${toolNames.join(',') || '∅'}`);
     }
 
     return body;

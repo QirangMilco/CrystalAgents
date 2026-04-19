@@ -182,6 +182,12 @@ client.handleCapability(CLIENT_OPEN_FILE_DIALOG, async (spec: FileDialogSpec) =>
 
 const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailable(ch))
 
+const rendererEnv = Object.freeze({
+  CRAFT_DEBUG_STREAMING_STEPS: process.env.CRAFT_DEBUG_STREAMING_STEPS,
+  CRAFT_DEBUG_TOOL_TITLES: process.env.CRAFT_DEBUG_TOOL_TITLES,
+  NODE_ENV: process.env.NODE_ENV,
+})
+
 ;(api as any).getRuntimeEnvironment = (): 'electron' | 'web' => 'electron'
 
 // ---------------------------------------------------------------------------
@@ -432,3 +438,4 @@ client.onConnectionStateChanged((state) => {
 ;(api as ElectronAPI).changeLanguage = (lang: string) => ipcRenderer.invoke('i18n:changeLanguage', lang)
 
 contextBridge.exposeInMainWorld('electronAPI', api)
+contextBridge.exposeInMainWorld('process', { env: rendererEnv })

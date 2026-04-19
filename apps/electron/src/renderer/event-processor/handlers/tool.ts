@@ -15,6 +15,14 @@ import {
   generateMessageId
 } from '../helpers'
 
+function emitToolTitleDebugLog(label: string, payload: Record<string, unknown>): void {
+  if ((window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_TOOL_TITLES !== '1') return
+  if (typeof window === 'undefined' || !window.electronAPI?.debugLog) return
+
+  const safePayload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
+  void Promise.resolve(window.electronAPI.debugLog(label, safePayload)).catch(() => {})
+}
+
 /**
  * Handle tool_start - create or update tool message
  *
@@ -26,11 +34,23 @@ export function handleToolStart(
   event: ToolStartEvent
 ): SessionState {
   const { session, streaming } = state
-
   // Check if tool message already exists (SDK sends two events)
   const existingIndex = findToolMessage(session.messages, event.toolUseId)
 
   if (existingIndex !== -1) {
+    const existingMessage = session.messages[existingIndex]
+    emitToolTitleDebugLog('[tool-title-debug][renderer] update tool_start received', {
+      toolUseId: event.toolUseId,
+      incomingToolName: event.toolName,
+      incomingDisplayName: event.toolDisplayName ?? null,
+      incomingIntent: event.toolIntent ?? null,
+      incomingHasDisplayMeta: !!event.toolDisplayMeta,
+      existingToolName: existingMessage?.toolName ?? null,
+      existingDisplayName: existingMessage?.toolDisplayName ?? null,
+      existingIntent: existingMessage?.toolIntent ?? null,
+      existingHasDisplayMeta: !!existingMessage?.toolDisplayMeta,
+    })
+
     // Update with complete input (second event has full input)
     const updatedSession = updateMessageAt(session, existingIndex, {
       toolInput: event.toolInput,
@@ -40,6 +60,18 @@ export function handleToolStart(
       turnId: event.turnId,
       parentToolUseId: event.parentToolUseId,
     })
+
+    {
+      const updatedMessage = updatedSession.messages[existingIndex]
+      emitToolTitleDebugLog('[tool-title-debug][renderer] update tool_start applied', {
+        toolUseId: event.toolUseId,
+        updatedToolName: updatedMessage?.toolName ?? null,
+        updatedDisplayName: updatedMessage?.toolDisplayName ?? null,
+        updatedIntent: updatedMessage?.toolIntent ?? null,
+        updatedHasDisplayMeta: !!updatedMessage?.toolDisplayMeta,
+      })
+    }
+
     return { session: updatedSession, streaming }
   }
 
@@ -60,10 +92,23 @@ export function handleToolStart(
     toolDisplayMeta: event.toolDisplayMeta,
   }
 
-  return {
+  const nextState = {
     session: appendMessage(session, toolMessage),
     streaming,
   }
+
+  {
+    const createdMessage = nextState.session.messages.at(-1)
+    emitToolTitleDebugLog('[tool-title-debug][renderer] create tool_start applied', {
+      toolUseId: event.toolUseId,
+      toolName: createdMessage?.toolName ?? null,
+      displayName: createdMessage?.toolDisplayName ?? null,
+      intent: createdMessage?.toolIntent ?? null,
+      hasDisplayMeta: !!createdMessage?.toolDisplayMeta,
+    })
+  }
+
+  return nextState
 }
 
 /**

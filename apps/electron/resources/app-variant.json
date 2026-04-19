@@ -1,11 +1,18 @@
 {
-  "appId": "com.qirang.crystal-agent",
-  "productName": "Crystal Agents",
-  "bundleDisplayName": "Crystal Agents",
-  "artifactNamePrefix": "Crystal-Agents",
-  "dmgTitle": "Crystal Agents",
-  "configDirName": ".crystal-agent",
-  "workspaceDataDirName": ".crystal-agent",
+  "appId": "com.qirang.crystal-agent.dev",
+  "productName": "Crystal Agents Dev",
+  "bundleDisplayName": "Crystal Agents Dev",
+  "artifactNamePrefix": "Crystal-Agents-Dev",
+  "dmgTitle": "Crystal Agents Dev",
+  "deeplinkScheme": "crystalagentsdev",
+  "configDirName": ".crystal-agent-dev",
+  "workspaceDataDirName": ".crystal-agent-dev",
+  "update": {
+    "enabled": true,
+    "checkOnLaunch": false,
+    "autoDownload": false,
+    "autoInstallOnQuit": false
+  },
   "import": {
     "sourceConfigDirName": ".craft-agent",
     "copyOnFirstLaunch": false,

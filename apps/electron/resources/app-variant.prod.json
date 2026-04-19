@@ -4,6 +4,7 @@
   "bundleDisplayName": "Crystal Agents",
   "artifactNamePrefix": "Crystal-Agents",
   "dmgTitle": "Crystal Agents",
+  "deeplinkScheme": "crystalagents",
   "configDirName": ".crystal-agent",
   "workspaceDataDirName": ".crystal-agent",
   "update": {

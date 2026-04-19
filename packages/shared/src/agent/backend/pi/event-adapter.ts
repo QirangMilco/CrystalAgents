@@ -453,9 +453,36 @@ export class PiEventAdapter extends BaseEventAdapter {
       if (base) candidates.add(base);
     }
 
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      this.log.info('[tool-title-debug][adapter] resolveStoredMetadata start', {
+        toolCallId,
+        sessionDir: this.sessionDir || null,
+        candidates: Array.from(candidates),
+      });
+    }
+
     for (const candidate of candidates) {
       const meta = toolMetadataStore.get(candidate, this.sessionDir);
-      if (meta) return { meta, keyTried: candidate };
+      if (meta) {
+        if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+          this.log.info('[tool-title-debug][adapter] resolveStoredMetadata hit', {
+            toolCallId,
+            candidate,
+            sessionDir: this.sessionDir || null,
+            hasIntent: !!meta.intent,
+            hasDisplayName: !!meta.displayName,
+          });
+        }
+        return { meta, keyTried: candidate };
+      }
+    }
+
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      this.log.info('[tool-title-debug][adapter] resolveStoredMetadata miss', {
+        toolCallId,
+        sessionDir: this.sessionDir || null,
+        candidates: Array.from(candidates),
+      });
     }
 
     return { meta: undefined, keyTried: Array.from(candidates).join(' -> ') };

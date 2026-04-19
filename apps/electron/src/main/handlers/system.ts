@@ -1,7 +1,8 @@
-import { resolve } from 'path'
-import { join } from 'path'
+import { app } from 'electron'
+import { resolve, join, dirname } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
+import { appendFileSync, mkdirSync } from 'fs'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { getGitBashPath, setGitBashPath, clearGitBashPath, getAppVariant } from '@craft-agent/shared/config'
 import { isUsableGitBashPath, validateGitBashPath } from '@craft-agent/server-core/services'
@@ -31,6 +32,33 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.gitbash.BROWSE,
   RPC_CHANNELS.gitbash.SET_PATH,
 ] as const
+
+function getRendererDebugLogPath(mainLogPath?: string): string | undefined {
+  if (mainLogPath) {
+    return join(dirname(mainLogPath), 'renderer-debug.log')
+  }
+
+  try {
+    const logsDir = app.getPath('logs')
+    return logsDir ? join(logsDir, 'renderer-debug.log') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function persistRendererDebugLog(mainLogPath: string | undefined, args: unknown[]): void {
+  const debugLogPath = getRendererDebugLogPath(mainLogPath)
+  if (!debugLogPath) return
+
+  const payload = {
+    timestamp: new Date().toISOString(),
+    scope: 'renderer',
+    message: args,
+  }
+
+  mkdirSync(dirname(debugLogPath), { recursive: true })
+  appendFileSync(debugLogPath, `${JSON.stringify(payload)}\n`, 'utf8')
+}
 
 export const GUI_HANDLED_CHANNELS = [
   RPC_CHANNELS.update.CHECK,
@@ -199,6 +227,11 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
   // Debug logging from renderer -> main log file (fire-and-forget, no response)
   server.handle(RPC_CHANNELS.debug.LOG, async (_ctx, ...args: unknown[]) => {
     deps.platform.logger.info('[renderer]', ...args)
+    try {
+      persistRendererDebugLog(deps.platform.getLogFilePath?.(), args)
+    } catch (error) {
+      deps.platform.logger.error('[renderer-debug] Failed to persist debug log:', error)
+    }
   })
 
   // Shell operations - open URL in external browser (or handle craftagents:// internally)

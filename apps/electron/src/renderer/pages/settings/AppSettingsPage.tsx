@@ -124,8 +124,6 @@ export default function AppSettingsPage() {
   const [importDetection, setImportDetection] = useState<{
     found: boolean
     sourcePath: string
-    hasConfig: boolean
-    hasWorkspaces: boolean
     availableEntries: Array<{
       name: string
       path: string
@@ -269,7 +267,6 @@ export default function AppSettingsPage() {
       const sourcePath = importSourcePath.trim() || importDetection?.sourcePath
       const result = await window.electronAPI.importOfficialData({
         sourcePath,
-        includeEntries: ['config.json', 'workspaces'],
       })
       setLastImportResult(result)
 

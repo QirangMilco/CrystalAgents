@@ -4,6 +4,7 @@
   "bundleDisplayName": "Crystal Agents Dev",
   "artifactNamePrefix": "Crystal-Agents-Dev",
   "dmgTitle": "Crystal Agents Dev",
+  "deeplinkScheme": "crystalagentsdev",
   "configDirName": ".crystal-agent-dev",
   "workspaceDataDirName": ".crystal-agent-dev",
   "update": {
@@ -16,6 +17,15 @@
     "sourceConfigDirName": ".craft-agent",
     "copyOnFirstLaunch": false,
     "workspaceDetection": false,
-    "include": []
+    "include": [
+      "config.json",
+      "preferences.json",
+      "credentials.enc",
+      "workspaces",
+      "theme.json",
+      "themes",
+      "permissions",
+      "tool-icons"
+    ]
   }
 }

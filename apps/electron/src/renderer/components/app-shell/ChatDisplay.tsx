@@ -50,6 +50,7 @@ import {
   formatTurnAsMarkdown,
   formatActivityAsMarkdown,
   getAssistantTurnUiKey,
+  deriveTurnPhase,
   asRecord,
   getAnnotationNoteText,
   isAnnotationFollowUpSent,
@@ -125,6 +126,14 @@ function getTurnKey(turn: Turn): string {
   if (turn.type === 'system') return `system-${turn.message.id}`
   if (turn.type === 'auth-request') return `auth-${turn.message.id}`
   return `turn-${turn.turnId}-${turn.timestamp}`
+}
+
+function emitStreamingDebugLog(label: string, payload: Record<string, unknown>): void {
+  if ((window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_STREAMING_STEPS !== '1') return
+  if (typeof window === 'undefined' || !window.electronAPI?.debugLog) return
+
+  const safePayload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
+  void Promise.resolve(window.electronAPI.debugLog(label, safePayload)).catch(() => {})
 }
 
 interface ChatDisplayProps {
@@ -656,15 +665,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const { tasks: backgroundTasks, killTask } = useBackgroundTasks({
     sessionId: session?.id ?? ''
   })
-
-  // TurnCard expansion state — persisted to localStorage across session switches
-  const {
-    expandedTurns,
-    toggleTurn,
-    expandedActivityGroups,
-    setExpandedActivityGroups,
-  } = useTurnCardExpansion(session?.id)
-
 
   // ============================================================================
   // Search Highlighting (from session list search)
@@ -1601,6 +1601,26 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return groupMessagesByTurn(session.messages)
   }, [session?.messages])
 
+  const autoExpandedAssistantTurnIds = useMemo(() => allTurns
+    .map((turn, index) => {
+      if (turn.type !== 'assistant') return null
+      const phase = deriveTurnPhase(turn)
+      if (phase !== 'pending' && phase !== 'tool_active' && phase !== 'awaiting' && phase !== 'streaming') {
+        return null
+      }
+      return getAssistantTurnUiKey(turn, index)
+    })
+    .filter((value): value is string => !!value), [allTurns])
+
+  // TurnCard expansion state — persisted to localStorage across session switches
+  const {
+    expandedTurns,
+    isTurnExpanded,
+    toggleTurn,
+    expandedActivityGroups,
+    setExpandedActivityGroups,
+  } = useTurnCardExpansion(session?.id, autoExpandedAssistantTurnIds)
+
   // Keep ref in sync for scroll handler
   totalTurnCountRef.current = allTurns.length
 
@@ -1608,6 +1628,49 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const startIndex = Math.max(0, allTurns.length - visibleTurnCount)
   const turns = allTurns.slice(startIndex)
   const hasMoreAbove = startIndex > 0
+  const debugStreamingSteps = (window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_STREAMING_STEPS === '1'
+
+  const assistantTurnDebugSnapshot = useMemo(() => turns
+    .map((turn, index) => {
+      if (turn.type !== 'assistant') return null
+      const assistantUiKey = getAssistantTurnUiKey(turn, index)
+      return {
+        index,
+        turnKey: getTurnKey(turn),
+        assistantUiKey,
+        turnId: turn.turnId,
+        timestamp: turn.timestamp,
+        activityCount: turn.activities.length,
+        hasResponse: !!turn.response,
+        responseMessageId: turn.response?.messageId ?? null,
+        isStreaming: turn.isStreaming,
+        isComplete: turn.isComplete,
+        isExpanded: isTurnExpanded(assistantUiKey),
+      }
+    })
+    .filter(Boolean), [isTurnExpanded, turns])
+
+  useEffect(() => {
+    if (!debugStreamingSteps || !session) return
+
+    emitStreamingDebugLog('[streaming-steps-debug][chat-display] render turns', {
+      sessionId: session.id,
+      isProcessing: session.isProcessing,
+      allTurnCount: allTurns.length,
+      visibleTurnCount,
+      renderedTurnCount: turns.length,
+      expandedTurns: [...expandedTurns],
+      assistantTurns: assistantTurnDebugSnapshot,
+    })
+
+    for (const turn of assistantTurnDebugSnapshot) {
+      emitStreamingDebugLog('[streaming-steps-debug][chat-display] mount turncard', {
+        sessionId: session.id,
+        ...turn,
+        expandedTurns: [...expandedTurns],
+      })
+    }
+  }, [allTurns.length, assistantTurnDebugSnapshot, debugStreamingSteps, expandedTurns, session, turns.length, visibleTurnCount])
 
   const sessionRecords = useMemo<SessionRecordItem[]>(() => {
     return allTurns.map((turn) => {
@@ -1920,7 +1983,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         intent={turn.intent}
                         isStreaming={turn.isStreaming}
                         isComplete={turn.isComplete}
-                        isExpanded={expandedTurns.has(assistantUiKey)}
+                        isExpanded={isTurnExpanded(assistantUiKey)}
                         onExpandedChange={(expanded) => toggleTurn(assistantUiKey, expanded)}
                         expandedActivityGroups={expandedActivityGroups}
                         onExpandedActivityGroupsChange={setExpandedActivityGroups}

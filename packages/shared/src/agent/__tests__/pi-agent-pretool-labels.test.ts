@@ -69,4 +69,59 @@ describe('PiAgent pre-tool labels guard', () => {
 
     agent.destroy()
   })
+
+  it('backfills tool_start metadata when tool_execution_start arrives before PreToolUse', async () => {
+    const agent = new PiAgent(createConfig())
+
+    const sent: Array<Record<string, unknown>> = []
+    const queuedEvents: Array<Record<string, unknown>> = []
+
+    ;(agent as any).send = (message: Record<string, unknown>) => {
+      sent.push(message)
+    }
+    ;(agent as any).emitAutomationEvent = async () => {}
+    ;(agent as any).eventQueue.enqueue = (event: Record<string, unknown>) => {
+      queuedEvents.push(event)
+    }
+
+    ;(agent as any).handleSubprocessEvent({
+      type: 'tool_execution_start',
+      toolName: 'mcp__session__script_sandbox',
+      toolCallId: 'call-race-1',
+      args: {
+        language: 'python3',
+        script: 'print(1)',
+      },
+    })
+
+    expect((agent as any).pendingToolStartBackfillByCallId.get('call-race-1')).toBeTruthy()
+
+    await (agent as any).handlePreToolUseRequest({
+      requestId: 'req-race-1',
+      toolName: 'mcp__session__script_sandbox',
+      toolCallId: 'call-race-1',
+      input: {
+        language: 'python3',
+        script: 'print(1)',
+        _displayName: '运行脚本',
+        _intent: '执行一段 Python 诊断脚本。',
+      },
+    })
+
+    const backfilledEvents = queuedEvents.filter(event => event.type === 'tool_start' && event.toolUseId === 'call-race-1')
+    expect(backfilledEvents.length).toBeGreaterThanOrEqual(2)
+    const backfilled = backfilledEvents.at(-1)
+    expect(backfilled).toBeTruthy()
+    expect(backfilled?.toolName).toBe('mcp__session__script_sandbox')
+    expect(backfilled?.intent).toBe('执行一段 Python 诊断脚本。')
+    expect(backfilled?.displayName).toBe('运行脚本')
+    expect((agent as any).pendingToolStartBackfillByCallId.has('call-race-1')).toBe(false)
+
+    const response = sent.at(-1)
+    const action = typeof response?.action === 'string' ? response.action : undefined
+    expect(response?.type).toBe('pre_tool_use_response')
+    expect(action === 'allow' || action === 'modify').toBe(true)
+
+    agent.destroy()
+  })
 })

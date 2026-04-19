@@ -248,8 +248,6 @@ export interface ElectronAPI {
   detectOfficialImportSource(sourcePath?: string): Promise<{
     found: boolean
     sourcePath: string
-    hasConfig: boolean
-    hasWorkspaces: boolean
     availableEntries: Array<{
       name: string
       path: string

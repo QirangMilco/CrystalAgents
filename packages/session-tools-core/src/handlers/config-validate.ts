@@ -5,6 +5,7 @@
  * Uses full validators if available (Claude), otherwise basic validation (Codex).
  */
 
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -19,8 +20,24 @@ import {
 } from '../validation.ts';
 import { getSourceConfigPath } from '../source-helpers.ts';
 
+function resolveWorkspaceDataDirName(): string {
+  const fallback = '.craft-agents';
+  const variantPath = process.env.CRAFT_APP_VARIANT_PATH || join(process.cwd(), 'apps', 'electron', 'resources', 'app-variant.json');
+  try {
+    if (!existsSync(variantPath)) return fallback;
+    const variant = JSON.parse(readFileSync(variantPath, 'utf-8')) as { workspaceDataDirName?: unknown };
+    return typeof variant.workspaceDataDirName === 'string' && variant.workspaceDataDirName.trim()
+      ? variant.workspaceDataDirName.trim()
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const WORKSPACE_DATA_DIR = resolveWorkspaceDataDirName();
+
 function getWorkspaceDataPath(workspaceRootPath: string): string {
-  return join(workspaceRootPath, '.craft-agents');
+  return join(workspaceRootPath, WORKSPACE_DATA_DIR);
 }
 
 export interface ConfigValidateArgs {

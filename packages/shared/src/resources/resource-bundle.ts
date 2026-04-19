@@ -23,7 +23,7 @@ import {
   restoreFiles,
   validateBundleFile,
 } from '../utils/bundle-files.ts'
-import { getWorkspaceSourcesPath, getWorkspaceSkillsPath } from '../workspaces/storage.ts'
+import { getWorkspaceSourcesPath, getWorkspaceSkillsPath, getWorkspaceConfigPath } from '../workspaces/storage.ts'
 import { getWorkspaceDataPath } from '../workspaces/data-path.ts'
 import { loadSourceConfig, getSourcePath } from '../sources/storage.ts'
 import { isBuiltinSource } from '../sources/builtin-sources.ts'
@@ -130,7 +130,7 @@ export function exportResources(
 
   // Try to read workspace name for informational purposes
   try {
-    const wsConfigPath = join(workspaceRootPath, 'config.json')
+    const wsConfigPath = getWorkspaceConfigPath(workspaceRootPath)
     if (existsSync(wsConfigPath)) {
       const wsConfig = JSON.parse(readFileSync(wsConfigPath, 'utf-8'))
       if (wsConfig.name) {

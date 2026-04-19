@@ -43,6 +43,28 @@ describe('session tool filtering helpers', () => {
     expect(names.includes('send_developer_feedback')).toBe(false);
   });
 
+  it('all canonical session tools expose required rich metadata fields', () => {
+    for (const def of SESSION_TOOL_DEFS) {
+      expect('_displayName' in def.inputSchema.shape).toBe(true);
+      expect('_intent' in def.inputSchema.shape).toBe(true);
+      expect(def.inputSchema.safeParse({}).success).toBe(false);
+    }
+  });
+
+  it('json schema conversion preserves required rich metadata fields for session tools', () => {
+    const defs = getToolDefsAsJsonSchema();
+    const scriptSandbox = defs.find(d => d.name === 'script_sandbox');
+
+    expect(scriptSandbox).toBeDefined();
+    expect(scriptSandbox?.inputSchema).toMatchObject({
+      properties: {
+        _displayName: expect.objectContaining({ type: 'string' }),
+        _intent: expect.objectContaining({ type: 'string' }),
+      },
+      required: expect.arrayContaining(['_displayName', '_intent']),
+    });
+  });
+
   it('all canonical session tools declare safeMode metadata', () => {
     for (const def of SESSION_TOOL_DEFS) {
       expect(def.safeMode === 'allow' || def.safeMode === 'block').toBe(true);

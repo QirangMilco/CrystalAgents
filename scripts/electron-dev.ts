@@ -4,7 +4,7 @@
  */
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync } from "fs";
+import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync, copyFileSync } from "fs";
 import { join, basename } from "path";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
@@ -12,6 +12,7 @@ import { downloadUv, type Platform, type Arch } from "./build/common";
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ELECTRON_DIR, "dist");
+const DEFAULT_VARIANT_PATH = join(ELECTRON_DIR, "resources", "app-variant.prod.json");
 
 // MCP server paths
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
@@ -76,7 +77,6 @@ function detectInstance(): void {
     const instanceNum = match[1];
     process.env.CRAFT_INSTANCE_NUMBER = instanceNum;
     process.env.CRAFT_VITE_PORT = `${instanceNum}173`;
-    process.env.CRAFT_APP_NAME = `Craft Agents [${instanceNum}]`;
     process.env.CRAFT_CONFIG_DIR = join(process.env.HOME || "", `.craft-agent-${instanceNum}`);
     process.env.CRAFT_DEEPLINK_SCHEME = `craftagents${instanceNum}`;
     process.env.CRAFT_APP_VARIANT_PATH = join(ROOT_DIR, 'apps', 'electron', 'resources', 'app-variant.dev.json');
@@ -178,12 +178,43 @@ function cleanViteCache(): void {
   }
 }
 
+function syncSelectedVariant(): void {
+  const selectedVariantPath = process.env.CRAFT_APP_VARIANT_PATH || DEFAULT_VARIANT_PATH;
+
+  for (const baseDir of [join(ELECTRON_DIR, "resources"), join(ELECTRON_DIR, "dist/resources")]) {
+    mkdirSync(baseDir, { recursive: true });
+    copyFileSync(selectedVariantPath, join(baseDir, "app-variant.json"));
+  }
+
+  console.log(`🔄 Synced app variant (${selectedVariantPath})`);
+}
+
+function syncSubprocessBundle(serverName: "session-mcp-server" | "pi-agent-server"): void {
+  const builtIndex = join(ROOT_DIR, "packages", serverName, "dist", "index.js");
+
+  if (!existsSync(builtIndex)) {
+    console.log(`⚠️ Skipping ${serverName} sync: build output not found`);
+    return;
+  }
+
+  for (const baseDir of [join(ELECTRON_DIR, "resources"), join(ELECTRON_DIR, "dist/resources")]) {
+    const serverDir = join(baseDir, serverName);
+    mkdirSync(serverDir, { recursive: true });
+    copyFileSync(builtIndex, join(serverDir, "index.js"));
+  }
+
+  console.log(`🔄 Synced ${serverName} bundle`);
+}
+
 // Copy resources to dist
 function copyResources(): void {
   const srcDir = join(ELECTRON_DIR, "resources");
   const destDir = join(ELECTRON_DIR, "dist/resources");
   if (existsSync(srcDir)) {
     cpSync(srcDir, destDir, { recursive: true, force: true });
+    syncSelectedVariant();
+    syncSubprocessBundle("session-mcp-server");
+    syncSubprocessBundle("pi-agent-server");
     console.log("📦 Copied resources to dist");
   }
 }
@@ -258,7 +289,6 @@ function getElectronEnv(): Record<string, string> {
     ...process.env as Record<string, string>,
     VITE_DEV_SERVER_URL: `http://localhost:${vitePort}`,
     CRAFT_CONFIG_DIR: process.env.CRAFT_CONFIG_DIR || "",
-    CRAFT_APP_NAME: process.env.CRAFT_APP_NAME || "Craft Agents",
     CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || "craftagents",
     CRAFT_INSTANCE_NUMBER: process.env.CRAFT_INSTANCE_NUMBER || "",
     CRAFT_APP_VARIANT_PATH: process.env.CRAFT_APP_VARIANT_PATH || join(ROOT_DIR, 'apps', 'electron', 'resources', 'app-variant.dev.json'),

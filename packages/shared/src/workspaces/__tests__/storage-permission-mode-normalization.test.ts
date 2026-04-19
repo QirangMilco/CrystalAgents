@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadWorkspaceConfig } from '../storage.ts';
+import { getWorkspaceDataPath } from '../data-path.ts';
 
 const tempDirs: string[] = [];
+
+function writeWorkspaceConfig(workspaceRoot: string, rawConfig: unknown): void {
+  const dataDir = getWorkspaceDataPath(workspaceRoot);
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
+}
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -33,7 +40,7 @@ describe('workspace storage: config normalization', () => {
       updatedAt: Date.now(),
     };
 
-    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
+    writeWorkspaceConfig(workspaceRoot, rawConfig);
 
     const loaded = loadWorkspaceConfig(workspaceRoot);
     expect(loaded).not.toBeNull();
@@ -57,12 +64,30 @@ describe('workspace storage: config normalization', () => {
       updatedAt: Date.now(),
     };
 
-    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
+    writeWorkspaceConfig(workspaceRoot, rawConfig);
 
     const loaded = loadWorkspaceConfig(workspaceRoot);
     expect(loaded).not.toBeNull();
     expect(loaded?.defaults?.permissionMode).toBe('allow-all');
     expect(loaded?.defaults?.cyclablePermissionModes).toEqual(['safe', 'ask', 'allow-all']);
+  });
+
+  it('ignores legacy root config.json', () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-root-legacy-'));
+    tempDirs.push(workspaceRoot);
+
+    const rawConfig = {
+      id: 'ws_legacy',
+      name: 'Legacy Root Config',
+      slug: 'legacy-root-config',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const loaded = loadWorkspaceConfig(workspaceRoot);
+    expect(loaded).toBeNull();
   });
 
   it('normalizes legacy defaults.thinkingLevel=think on read', () => {
@@ -80,7 +105,7 @@ describe('workspace storage: config normalization', () => {
       updatedAt: Date.now(),
     };
 
-    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
+    writeWorkspaceConfig(workspaceRoot, rawConfig);
 
     const loaded = loadWorkspaceConfig(workspaceRoot);
     expect(loaded).not.toBeNull();

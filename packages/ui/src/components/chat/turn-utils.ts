@@ -84,11 +84,23 @@ export type Turn = AssistantTurn | UserTurn | SystemTurn | AuthRequestTurn
  *   (e.g., steer/interruption boundaries).
  * - Expansion state must be keyed by UI-card identity, not raw backend turnId.
  */
-export function getAssistantTurnUiKey(turn: AssistantTurn, index: number): string {
-  if (turn.response?.messageId) {
-    return `assistant:msg:${turn.response.messageId}`
-  }
-  return `assistant:turn:${turn.turnId}:${turn.timestamp}:${index}`
+export function getAssistantTurnUiKey(turn: AssistantTurn, _index: number): string {
+  // Keep the UI identity stable for the entire lifetime of a grouped assistant turn.
+  // Do not depend on list index, first activity, or response message — streaming can
+  // reorder activities and add the final response later, which would make persisted
+  // expansion state drift and cause the steps list to appear/disappear.
+  return `assistant:turn:${turn.turnId}:${turn.timestamp}`
+}
+
+function emitStreamingStepsDebugLog(label: string, payload: Record<string, unknown>): void {
+  const env = typeof window !== 'undefined'
+    ? (window as Window & { process?: { env?: Record<string, string | undefined> }, electronAPI?: { debugLog?: (...args: unknown[]) => void | Promise<void> } }).process?.env
+    : undefined
+  if (env?.CRAFT_DEBUG_STREAMING_STEPS !== '1') return
+  if (typeof window === 'undefined' || !window.electronAPI?.debugLog) return
+
+  const safePayload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
+  void Promise.resolve(window.electronAPI.debugLog(label, safePayload)).catch(() => {})
 }
 
 // ============================================================================
@@ -353,6 +365,21 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
 
   const flushCurrentTurn = (interrupted = false) => {
     if (currentTurn) {
+      emitStreamingStepsDebugLog('[streaming-steps-debug][turn-utils] flushCurrentTurn:start', {
+        turnId: currentTurn.turnId,
+        interrupted,
+        activityCount: currentTurn.activities.length,
+        responseTextLength: currentTurn.response?.text?.length ?? 0,
+        responseIsStreaming: currentTurn.response?.isStreaming ?? null,
+        isStreaming: currentTurn.isStreaming,
+        isComplete: currentTurn.isComplete,
+        activityTypes: currentTurn.activities.map(activity => ({
+          id: activity.id,
+          type: activity.type,
+          status: activity.status,
+          toolName: activity.toolName ?? null,
+        })),
+      })
       // Sort activities by timestamp to ensure correct chronological order
       // This is necessary because buffering can delay when messages are added
       // to the array, causing commentary to appear after tools that started later
@@ -549,6 +576,17 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
       // Pass existing activities for incremental depth calculation
       currentTurn.activities.push(messageToActivity(message, currentTurn.activities))
       currentTurn.isStreaming = !isToolComplete
+      emitStreamingStepsDebugLog('[streaming-steps-debug][turn-utils] tool message grouped', {
+        messageId: message.id,
+        turnId: currentTurn.turnId,
+        toolUseId: message.toolUseId ?? null,
+        toolName: message.toolName ?? null,
+        toolStatus: message.toolStatus ?? null,
+        isToolComplete,
+        activityCount: currentTurn.activities.length,
+        isStreaming: currentTurn.isStreaming,
+        isComplete: currentTurn.isComplete,
+      })
       continue
     }
 
@@ -624,6 +662,15 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
       }
       currentTurn.isStreaming = !!message.isStreaming
       currentTurn.isComplete = !message.isStreaming
+      emitStreamingStepsDebugLog('[streaming-steps-debug][turn-utils] final response grouped', {
+        messageId: message.id,
+        turnId: currentTurn.turnId,
+        responseIsStreaming: !!message.isStreaming,
+        responseTextLength: message.content.length,
+        activityCount: currentTurn.activities.length,
+        isStreaming: currentTurn.isStreaming,
+        isComplete: currentTurn.isComplete,
+      })
 
       // Flush when turn is complete (non-streaming = final response received)
       if (!message.isStreaming) {

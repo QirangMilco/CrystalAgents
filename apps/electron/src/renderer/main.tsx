@@ -13,6 +13,13 @@ import { initReactI18next } from 'react-i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import './index.css'
 
+function emitRendererCrashLog(label: string, payload: Record<string, unknown>): void {
+  if (typeof window === 'undefined' || !window.electronAPI?.debugLog) return
+
+  const safePayload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
+  void Promise.resolve(window.electronAPI.debugLog(label, safePayload)).catch(() => {})
+}
+
 // Initialize i18n before any React rendering
 setupI18n([LanguageDetector, initReactI18next])
 
@@ -85,6 +92,12 @@ sentryInit(
  * Sentry.ErrorBoundary captures the error and sends it to Sentry automatically.
  */
 function CrashFallback() {
+  React.useEffect(() => {
+    emitRendererCrashLog('[renderer-crash] CrashFallback rendered', {
+      href: typeof window !== 'undefined' ? window.location.href : null,
+    })
+  }, [])
+
   return (
     <div className="flex flex-col items-center justify-center h-screen font-sans text-foreground/50 gap-3">
       <p className="text-base font-medium">Something went wrong</p>
@@ -115,9 +128,48 @@ function Root() {
   )
 }
 
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (event) => {
+    emitRendererCrashLog('[renderer-crash] window.error', {
+      message: event.message,
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+      errorName: event.error?.name ?? null,
+      errorMessage: event.error?.message ?? null,
+      errorStack: event.error?.stack ?? null,
+    })
+  })
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason
+    emitRendererCrashLog('[renderer-crash] window.unhandledrejection', {
+      reasonType: typeof reason,
+      reasonName: reason?.name ?? null,
+      reasonMessage: reason?.message ?? String(reason ?? ''),
+      reasonStack: reason?.stack ?? null,
+    })
+  })
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Sentry.ErrorBoundary fallback={<CrashFallback />}>
+    <Sentry.ErrorBoundary
+      fallback={<CrashFallback />}
+      onError={(error, componentStack, eventId) => {
+        const normalizedError = error instanceof Error
+          ? error
+          : new Error(typeof error === 'string' ? error : JSON.stringify(error))
+
+        emitRendererCrashLog('[renderer-crash] error-boundary', {
+          eventId,
+          errorName: normalizedError.name,
+          errorMessage: normalizedError.message,
+          errorStack: normalizedError.stack ?? null,
+          componentStack,
+        })
+      }}
+    >
       <JotaiProvider>
         <Root />
       </JotaiProvider>

@@ -67,7 +67,7 @@ setupI18n()
 const machineId = createHash('sha256').update(hostname() + homedir()).digest('hex').slice(0, 16)
 Sentry.setUser({ id: machineId })
 
-import { join, delimiter, resolve as resolvePath } from 'path'
+import { join, dirname, delimiter, resolve as resolvePath } from 'path'
 import { existsSync, readFileSync, cpSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
@@ -181,8 +181,9 @@ registerPiModelResolver((piAuthProvider) =>
 )
 
 // Custom URL scheme for deeplinks (e.g., craftagents://auth-complete)
-// Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (craftagents1, craftagents2, etc.)
-const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'
+// Variant is the product-level source of truth; env remains an override for ad-hoc multi-instance dev.
+const variant = getAppVariant()
+const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || variant.deeplinkScheme || 'craftagents'
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
@@ -195,9 +196,7 @@ let moduleClientResolver: ((webContentsId: number) => string | undefined) | null
 let pendingDeepLink: string | null = null
 
 // Set app name early (before app.whenReady) to ensure correct macOS menu bar title
-// Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Craft Agents [1]")
-const variant = getAppVariant()
-const DEFAULT_APP_NAME = process.env.CRAFT_APP_NAME || variant.bundleDisplayName || 'Craft Agents'
+const DEFAULT_APP_NAME = variant.bundleDisplayName || 'Craft Agents'
 app.setName(DEFAULT_APP_NAME)
 
 const isolatedElectronDataDir = process.env.CRAFT_ELECTRON_USER_DATA_DIR?.trim()
@@ -318,8 +317,6 @@ type ImportEntryDescriptor = {
 type ImportDetectionResult = {
   found: boolean
   sourcePath: string
-  hasConfig: boolean
-  hasWorkspaces: boolean
   availableEntries: ImportEntryDescriptor[]
 }
 
@@ -337,31 +334,55 @@ type ManualImportResult = {
   }>
 }
 
+function getVariantImportEntries(): string[] {
+  const entries = getAppVariant().import.include
+  return Array.isArray(entries) ? entries.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : []
+}
+
+function describeImportEntry(name: string): string {
+  switch (name) {
+    case 'config.json':
+      return 'Workspace list and active workspace metadata'
+    case 'workspaces':
+      return 'Workspace folders referenced by the global config'
+    case 'preferences.json':
+      return 'App-level preferences and user settings'
+    case 'credentials.enc':
+      return 'Encrypted stored credentials'
+    case 'theme.json':
+      return 'Active theme selection'
+    case 'themes':
+      return 'Custom themes'
+    case 'permissions':
+      return 'Explore mode permission rules'
+    case 'tool-icons':
+      return 'Tool icon mappings'
+    default:
+      return 'Imported into the current variant config directory'
+  }
+}
+
 function getOfficialConfigDirCandidate(explicitPath?: string): string {
   if (explicitPath && explicitPath.trim()) return explicitPath.trim()
 
   const variant = getAppVariant()
   const primary = variant.import.sourceConfigDirName || '.craft-agent'
-  const fallbackNames = ['.crystal-agent', '.craft-agent']
-  const candidateNames = Array.from(new Set([primary, ...fallbackNames]))
-
   const currentConfigDir = resolvePath(CONFIG_DIR)
-  const candidates = candidateNames
-    .map(name => join(homedir(), name))
-    .filter(path => resolvePath(path) !== currentConfigDir)
+  const candidate = join(homedir(), primary)
 
-  for (const candidate of candidates) {
+  if (resolvePath(candidate) !== currentConfigDir) {
     try {
-      if (!existsSync(candidate) || !statSync(candidate).isDirectory()) continue
-      const hasConfig = existsSync(join(candidate, 'config.json'))
-      const hasWorkspaces = existsSync(join(candidate, 'workspaces'))
-      if (hasConfig || hasWorkspaces) return candidate
+      if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+        const hasConfig = existsSync(join(candidate, 'config.json'))
+        const hasWorkspaces = existsSync(join(candidate, 'workspaces'))
+        if (hasConfig || hasWorkspaces) return candidate
+      }
     } catch {
-      // Ignore invalid/unreadable candidate and continue
+      // Ignore invalid/unreadable candidate and fall back to the configured official path
     }
   }
 
-  return candidates[0] || join(homedir(), '.craft-agent')
+  return candidate
 }
 
 function detectOfficialConfigSource(explicitPath?: string): ImportDetectionResult {
@@ -371,34 +392,23 @@ function detectOfficialConfigSource(explicitPath?: string): ImportDetectionResul
   const isCurrentVariantDir = sourceResolved === currentResolved
 
   const hasRoot = !isCurrentVariantDir && existsSync(sourcePath) && statSync(sourcePath).isDirectory()
-  const hasConfig = hasRoot && existsSync(join(sourcePath, 'config.json'))
-  const hasWorkspaces = hasRoot && existsSync(join(sourcePath, 'workspaces'))
-  const availableEntries: ImportEntryDescriptor[] = [
-    {
-      name: 'config.json',
-      path: join(sourcePath, 'config.json'),
-      kind: 'file',
-      exists: hasConfig,
+  const availableEntries: ImportEntryDescriptor[] = getVariantImportEntries().map((name) => {
+    const path = join(sourcePath, name)
+    const isDirectory = hasRoot && existsSync(path) && statSync(path).isDirectory()
+    const isFile = hasRoot && existsSync(path) && statSync(path).isFile()
+    return {
+      name,
+      path,
+      kind: isDirectory ? 'directory' : 'file',
+      exists: isDirectory || isFile,
       description: isCurrentVariantDir
         ? 'Source path points to the current variant config directory; choose the official app directory instead'
-        : 'Workspace list and active workspace metadata',
-    },
-    {
-      name: 'workspaces',
-      path: join(sourcePath, 'workspaces'),
-      kind: 'directory',
-      exists: hasWorkspaces,
-      description: isCurrentVariantDir
-        ? 'Source path points to the current variant config directory; choose the official app directory instead'
-        : 'Workspace folders referenced by the global config',
-    },
-  ]
-
+        : describeImportEntry(name),
+    }
+  })
   return {
-    found: hasRoot && (hasConfig || hasWorkspaces),
+    found: hasRoot && availableEntries.some(entry => entry.exists),
     sourcePath,
-    hasConfig,
-    hasWorkspaces,
     availableEntries,
   }
 }
@@ -494,20 +504,13 @@ function importOfficialConfigManually(args?: { sourcePath?: string; includeEntri
       success: false,
       sourcePath: detection.sourcePath,
       imported: [],
-      skipped: ['config.json', 'workspaces'],
+      skipped: getVariantImportEntries(),
       warnings: ['Source path points to current variant config directory'],
-      results: [
-        {
-          name: 'config.json',
-          status: 'failed',
-          detail: 'Source path is the current variant config directory. Select the official app config directory instead.',
-        },
-        {
-          name: 'workspaces',
-          status: 'failed',
-          detail: 'Source path is the current variant config directory. Select the official app config directory instead.',
-        },
-      ],
+      results: getVariantImportEntries().map(name => ({
+        name,
+        status: 'failed' as const,
+        detail: 'Source path is the current variant config directory. Select the official app config directory instead.',
+      })),
       error: 'Invalid import source: source and target directories are the same.',
     }
   }
@@ -532,9 +535,10 @@ function importOfficialConfigManually(args?: { sourcePath?: string; includeEntri
   const targetPath = CONFIG_DIR
   if (!existsSync(targetPath)) mkdirSync(targetPath, { recursive: true })
 
+  const allowedEntries = new Set(getVariantImportEntries())
   const includeEntries = (args?.includeEntries && args.includeEntries.length > 0)
-    ? args.includeEntries
-    : ['config.json', 'workspaces']
+    ? args.includeEntries.filter(entry => allowedEntries.has(entry))
+    : [...allowedEntries]
 
   const imported: string[] = []
   const skipped: string[] = []
@@ -1345,7 +1349,11 @@ app.whenReady().then(async () => {
 
     mainLog.info('App initialized successfully')
     if (isDebugMode) {
-      mainLog.info('Debug mode enabled - logs at:', getLogFilePath())
+      const mainLogPath = getLogFilePath()
+      mainLog.info('Debug mode enabled - logs at:', mainLogPath)
+      if (mainLogPath) {
+        mainLog.info('Renderer debug logs at:', join(dirname(mainLogPath), 'renderer-debug.log'))
+      }
     }
   } catch (error) {
     mainLog.error('Failed to initialize app:', error instanceof Error ? error.message : error, (error as any)?.stack)

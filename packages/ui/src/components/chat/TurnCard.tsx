@@ -698,10 +698,34 @@ function formatToolDisplay(
 
   // Final fallback: Use LLM-generated displayName or tool name
   const name = displayName || (toolName ? getToolDisplayName(toolName) : 'Processing')
+  emitSafeRendererDebugLog('[tool-title-debug][turncard] formatToolDisplay', {
+    activityId: activity.id,
+    toolUseId: activity.toolUseId ?? null,
+    toolName: toolName ?? null,
+    displayName: displayName ?? null,
+    hasDisplayMeta: !!toolDisplayMeta,
+    resolvedName: name,
+    branch: toolDisplayMeta ? 'meta' : (displayName ? 'displayName' : 'fallback-toolName'),
+  }, 'CRAFT_DEBUG_TOOL_TITLES')
   return { name }
 }
 
 /** Get the primary preview text for collapsed state */
+function emitSafeRendererDebugLog(
+  label: string,
+  payload: Record<string, unknown>,
+  envFlag: 'CRAFT_DEBUG_STREAMING_STEPS' | 'CRAFT_DEBUG_TOOL_TITLES'
+): void {
+  const env = typeof window !== 'undefined'
+    ? (window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env
+    : undefined
+  if (env?.[envFlag] !== '1') return
+  if (typeof window === 'undefined' || !window.electronAPI?.debugLog) return
+
+  const safePayload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
+  void Promise.resolve(window.electronAPI.debugLog(label, safePayload)).catch(() => {})
+}
+
 function getPreviewText(
   activities: ActivityItem[],
   intent?: string,
@@ -716,14 +740,40 @@ function getPreviewText(
   const activityWithIntent = activities.find(a => a.intent)
   if (activityWithIntent?.intent) return activityWithIntent.intent
 
-  // Check if we're in responding state
-  if (isStreaming && hasResponse) return 'Responding...'
+  // Get running and completed tools (not intermediate messages)
+  const runningTools = activities.filter(a => a.status === 'running' && a.toolName)
+  const errorCount = activities.filter(a => a.status === 'error').length
+
+  const stepSummary = (() => {
+    const errorSuffix = errorCount > 0
+      ? ` · ${errorCount} error${errorCount > 1 ? 's' : ''}`
+      : ''
+    return `Steps Completed${errorSuffix}`
+  })()
 
   // Find running Task tools and show their description
   const runningTask = activities.find(a => a.toolName === 'Task' && a.status === 'running')
   if (runningTask?.toolInput?.description) {
     return runningTask.toolInput.description as string
   }
+
+  // Once the turn already has concrete steps, keep the collapsed header stable.
+  // Do not fall back to ephemeral "Responding..." / intermediate commentary during
+  // the final response stream, otherwise the user sees the steps header disappear.
+  if (activities.length > 0 && (isStreaming || isComplete || !isStreaming)) {
+    // Preserve specific Task description when available after completion.
+    const firstTask = activities.find(a => a.toolName === 'Task')
+    if (firstTask?.toolInput?.description) {
+      const errorSuffix = errorCount > 0
+        ? ` · ${errorCount} error${errorCount > 1 ? 's' : ''}`
+        : ''
+      return `${firstTask.toolInput.description as string}${errorSuffix}`
+    }
+    return stepSummary
+  }
+
+  // Check if we're in responding state for response-only turns
+  if (isStreaming && hasResponse) return 'Responding...'
 
   // While still streaming, show the latest intermediate message content
   // This gives visibility into what the LLM is "thinking"
@@ -736,33 +786,12 @@ function getPreviewText(
     }
   }
 
-  // Get running and completed tools (not intermediate messages)
-  const runningTools = activities.filter(a => a.status === 'running' && a.toolName)
-  const errorCount = activities.filter(a => a.status === 'error').length
-
-  // Show running tool names
+  // Show running tool names for tool-only turns before a stable step summary exists
   if (runningTools.length > 0) {
     const toolNames = runningTools
       .map(a => getToolDisplayName(a.toolName!))
       .slice(0, 3) // Max 3 names
     return `${toolNames.join(', ')}...`
-  }
-
-  // When complete, show first Task's description if available
-  const firstTask = activities.find(a => a.toolName === 'Task')
-  if (firstTask?.toolInput?.description) {
-    const errorSuffix = errorCount > 0
-      ? ` · ${errorCount} error${errorCount > 1 ? 's' : ''}`
-      : ''
-    return `${firstTask.toolInput.description as string}${errorSuffix}`
-  }
-
-  // When complete, show summary (badge already shows count)
-  if (isComplete || (!isStreaming && activities.length > 0)) {
-    const errorSuffix = errorCount > 0
-      ? ` · ${errorCount} error${errorCount > 1 ? 's' : ''}`
-      : ''
-    return `Steps Completed${errorSuffix}`
   }
 
   return 'Starting...'
@@ -1831,7 +1860,10 @@ export function ResponseCard({
 
       setAnnotationOverlay({ rects: geometry.rects, chips: geometry.chips })
 
-      if (process.env.NODE_ENV !== 'production' && geometry.unresolved.length > 0) {
+      const nodeEnv = (typeof window !== 'undefined'
+        ? (window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.NODE_ENV
+        : undefined) ?? 'production'
+      if (nodeEnv !== 'production' && geometry.unresolved.length > 0) {
         console.debug('[annotations] unresolved annotations', {
           count: geometry.unresolved.length,
           ids: geometry.unresolved.map(item => item.annotation.id),
@@ -2825,6 +2857,29 @@ export const TurnCard = React.memo(function TurnCard({
     [activities, intent, isStreaming, response, isComplete]
   )
 
+  useEffect(() => {
+    const toolSummaries = activities
+      .filter(a => a.type === 'tool')
+      .map(a => ({
+        id: a.id,
+        toolUseId: a.toolUseId ?? null,
+        toolName: a.toolName ?? null,
+        displayName: a.displayName ?? null,
+        intent: a.intent ?? null,
+        hasDisplayMeta: !!a.toolDisplayMeta,
+        status: a.status,
+      }))
+    emitSafeRendererDebugLog('[tool-title-debug][turncard] preview decision', {
+      turnId,
+      previewText,
+      intent: intent ?? null,
+      isStreaming,
+      isComplete,
+      activityCount: activities.length,
+      toolSummaries,
+    }, 'CRAFT_DEBUG_TOOL_TITLES')
+  }, [activities, intent, isStreaming, isComplete, previewText, turnId])
+
   // Sort activities by timestamp for correct chronological order
   // This handles the live streaming case (turn-utils sorts on flush for completed turns)
   const allSortedActivities = useMemo(
@@ -2869,13 +2924,12 @@ export const TurnCard = React.memo(function TurnCard({
   }
 
   // Don't render turns that were interrupted before any meaningful work happened.
-  // Hide the turn if:
-  // - All tool activities are errors (nothing completed successfully)
-  // - Any intermediate activities have no meaningful content (empty or just whitespace)
-  // - No response text to show
-  // - No plan activities
-  // The "Response interrupted" info banner alone is sufficient feedback.
-  const hasNoMeaningfulWork = activities.length > 0
+  // Only hide after the turn has actually completed; during active / awaiting phases
+  // a tool-only error sequence may still be followed by more tool calls or the final
+  // assistant response, and hiding the card mid-stream causes the visible step list
+  // to flash and disappear.
+  const hasNoMeaningfulWork = isComplete
+    && activities.length > 0
     && activities.every(a => {
       // Tool activities must be errors (interrupted/failed)
       if (a.type === 'tool') return a.status === 'error'
@@ -2887,9 +2941,6 @@ export const TurnCard = React.memo(function TurnCard({
       return true
     })
     && !response
-  if (hasNoMeaningfulWork) {
-    return null
-  }
 
   // Only count non-plan activities for the collapsible section
   const hasActivities = sortedActivities.length > 0
@@ -2898,6 +2949,47 @@ export const TurnCard = React.memo(function TurnCard({
   // This properly handles the "gap" state (awaiting) between tool completion and next action,
   // which was previously causing the turn card to "disappear".
   const isThinking = shouldShowThinkingIndicator(turnPhase, isBuffering)
+  const shouldShowWaitingIndicator = isThinking && !hasActivities
+
+  useEffect(() => {
+    emitSafeRendererDebugLog('[streaming-steps-debug][turncard] render state', {
+      turnId,
+      hasActivities,
+      activityCount: activities.length,
+      sortedActivityCount: sortedActivities.length,
+      isExpanded,
+      isThinking,
+      shouldShowWaitingIndicator,
+      turnPhase,
+      hasResponse: !!response,
+      responseMessageId: response?.messageId ?? null,
+      isStreaming,
+      isComplete,
+      isBuffering,
+      hasNoMeaningfulWork,
+      previewText,
+      toolActivitySummaries: sortedActivities
+        .filter(a => a.type === 'tool')
+        .map(a => ({
+          id: a.id,
+          toolUseId: a.toolUseId ?? null,
+          toolName: a.toolName ?? null,
+          displayName: a.displayName ?? null,
+          status: a.status,
+        })),
+    }, 'CRAFT_DEBUG_STREAMING_STEPS')
+  }, [activities.length, hasActivities, hasNoMeaningfulWork, isBuffering, isComplete, isExpanded, isStreaming, isThinking, previewText, response?.messageId, shouldShowWaitingIndicator, sortedActivities, turnId, turnPhase])
+
+  if (hasNoMeaningfulWork) {
+    emitSafeRendererDebugLog('[streaming-steps-debug][turncard] suppress empty interrupted turn', {
+      turnId,
+      turnPhase,
+      activityCount: activities.length,
+      isStreaming,
+      isComplete,
+    }, 'CRAFT_DEBUG_STREAMING_STEPS')
+    return null
+  }
 
   return (
     <div className="space-y-1">
@@ -3043,7 +3135,7 @@ export const TurnCard = React.memo(function TurnCard({
                     ))
                   )}
                   {/* Thinking/Buffering indicator - shown while waiting for response */}
-                  {isThinking && !animateResponse && (
+                  {shouldShowWaitingIndicator && !animateResponse && (
                     <motion.div
                       key="thinking"
                       initial={{ opacity: 0, x: -8 }}
@@ -3072,7 +3164,7 @@ export const TurnCard = React.memo(function TurnCard({
       )}
 
       {/* Standalone thinking indicator - when no activities but still working */}
-      {!hasActivities && isThinking && !animateResponse && (
+      {!hasActivities && shouldShowWaitingIndicator && !animateResponse && (
         <div className={cn("flex items-center gap-2 px-3 py-1.5 text-muted-foreground", SIZE_CONFIG.fontSize)}>
           <Spinner className={SIZE_CONFIG.spinnerSize} />
           <span>{isBuffering ? 'Preparing response...' : 'Thinking...'}</span>

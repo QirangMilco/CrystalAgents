@@ -22,6 +22,14 @@ interface ExpansionEntry {
 /** Full map stored in localStorage */
 type ExpansionMap = Record<string, ExpansionEntry>
 
+function emitStreamingDebugLog(label: string, payload: Record<string, unknown>): void {
+  if ((window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_STREAMING_STEPS !== '1') return
+  if (typeof window === 'undefined' || !window.electronAPI?.debugLog) return
+
+  const safePayload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
+  void Promise.resolve(window.electronAPI.debugLog(label, safePayload)).catch(() => {})
+}
+
 /**
  * Read the full expansion map from localStorage.
  * Returns empty object on parse failure.
@@ -54,7 +62,8 @@ function writeMap(map: ExpansionMap): void {
  * Persist TurnCard expansion state for the given session.
  * Returns controlled state + callbacks to pass to TurnCard components.
  */
-export function useTurnCardExpansion(sessionId: string | undefined) {
+export function useTurnCardExpansion(sessionId: string | undefined, autoExpandedTurnIds: string[] = []) {
+  const autoExpandedTurnIdSet = new Set(autoExpandedTurnIds)
   // Initialize state from localStorage for this session
   const [expandedTurns, setExpandedTurns] = useState<Set<string>>(() => {
     if (!sessionId) return new Set()
@@ -72,6 +81,7 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
 
   // Track sessionId so we can save/restore on session switch
   const prevSessionIdRef = useRef(sessionId)
+  const manuallyCollapsedTurnsRef = useRef<Set<string>>(new Set())
 
   // When sessionId changes, save current state and load new session's state
   useEffect(() => {
@@ -81,15 +91,70 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
     if (sessionId) {
       const map = readMap()
       const entry = map[sessionId]
-      setExpandedTurns(entry ? new Set(entry.turns) : new Set())
-      setExpandedActivityGroups(entry ? new Set(entry.groups) : new Set())
+      const nextTurns = entry ? new Set(entry.turns) : new Set<string>()
+      const nextGroups = entry ? new Set(entry.groups) : new Set<string>()
+      setExpandedTurns(nextTurns)
+      setExpandedActivityGroups(nextGroups)
+      manuallyCollapsedTurnsRef.current = new Set()
+      emitStreamingDebugLog('[streaming-steps-debug][expansion] load session state', {
+        previousSessionId: prevSessionIdRef.current ?? null,
+        sessionId,
+        expandedTurns: [...nextTurns],
+        expandedGroups: [...nextGroups],
+      })
     } else {
       setExpandedTurns(new Set())
       setExpandedActivityGroups(new Set())
+      manuallyCollapsedTurnsRef.current = new Set()
+      emitStreamingDebugLog('[streaming-steps-debug][expansion] clear session state', {
+        previousSessionId: prevSessionIdRef.current ?? null,
+      })
     }
 
     prevSessionIdRef.current = sessionId
   }, [sessionId])
+
+  useEffect(() => {
+    if (!sessionId || autoExpandedTurnIds.length === 0) return
+
+    const collapsedTurns = manuallyCollapsedTurnsRef.current
+    const nextAutoExpanded = autoExpandedTurnIds.filter(turnId => !collapsedTurns.has(turnId))
+    if (nextAutoExpanded.length === 0) {
+      emitStreamingDebugLog('[streaming-steps-debug][expansion] skip auto expand', {
+        sessionId,
+        autoExpandedTurnIds,
+        collapsedTurns: [...collapsedTurns],
+      })
+      return
+    }
+
+    setExpandedTurns(prev => {
+      const missingTurnIds = nextAutoExpanded.filter(turnId => !prev.has(turnId))
+      if (missingTurnIds.length === 0) return prev
+
+      const next = new Set(prev)
+      for (const turnId of missingTurnIds) {
+        next.add(turnId)
+      }
+
+      emitStreamingDebugLog('[streaming-steps-debug][expansion] auto expand active turns', {
+        sessionId,
+        autoExpandedTurnIds,
+        appliedTurnIds: missingTurnIds,
+        collapsedTurns: [...collapsedTurns],
+        before: [...prev],
+        after: [...next],
+      })
+
+      return next
+    })
+  }, [autoExpandedTurnIds, sessionId])
+
+  const isTurnExpanded = useCallback((turnId: string) => {
+    if (expandedTurns.has(turnId)) return true
+    if (manuallyCollapsedTurnsRef.current.has(turnId)) return false
+    return autoExpandedTurnIdSet.has(turnId)
+  }, [autoExpandedTurnIdSet, expandedTurns])
 
   // Persist to localStorage whenever expansion state changes.
   // Uses a ref to avoid stale closures and only writes when we have a valid session.
@@ -110,6 +175,9 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
         delete map[sessionId]
         writeMap(map)
       }
+      emitStreamingDebugLog('[streaming-steps-debug][expansion] persist empty', {
+        sessionId,
+      })
       return
     }
 
@@ -119,6 +187,11 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
       lastAccessed: Date.now(),
     }
     writeMap(map)
+    emitStreamingDebugLog('[streaming-steps-debug][expansion] persist state', {
+      sessionId,
+      expandedTurns: turns,
+      expandedGroups: groups,
+    })
   }, [sessionId, expandedTurns, expandedActivityGroups])
 
   // Toggle a single turn's expansion state
@@ -127,15 +200,26 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
       const next = new Set(prev)
       if (expanded) {
         next.add(turnId)
+        manuallyCollapsedTurnsRef.current.delete(turnId)
       } else {
         next.delete(turnId)
+        manuallyCollapsedTurnsRef.current.add(turnId)
       }
+      emitStreamingDebugLog('[streaming-steps-debug][expansion] toggle turn', {
+        sessionId: sessionId ?? null,
+        turnId,
+        expanded,
+        before: [...prev],
+        after: [...next],
+        manuallyCollapsedTurns: [...manuallyCollapsedTurnsRef.current],
+      })
       return next
     })
-  }, [])
+  }, [sessionId])
 
   return {
     expandedTurns,
+    isTurnExpanded,
     toggleTurn,
     expandedActivityGroups,
     setExpandedActivityGroups,

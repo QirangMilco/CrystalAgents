@@ -200,6 +200,16 @@ export class PiAgent extends BaseAgent {
     capturedAt: number;
   }> = new Map();
 
+  // tool_execution_start can arrive before pre_tool_use_request. When that happens,
+  // keep enough context to patch the existing tool row by re-emitting tool_start
+  // with the same toolUseId once metadata becomes available.
+  private pendingToolStartBackfillByCallId: Map<string, {
+    toolName: string;
+    args: Record<string, unknown>;
+    turnId?: string;
+    parentToolUseId?: string;
+  }> = new Map();
+
   // Current user message (for context in summarization)
   private currentUserMessage: string = '';
 
@@ -251,7 +261,7 @@ export class PiAgent extends BaseAgent {
 
     // Set session dir on adapter for concurrent-safe toolMetadataStore lookups
     if (config.session?.id && config.workspace.rootPath) {
-      this.adapter.setSessionDir(join(config.workspace.rootPath, 'sessions', config.session.id));
+      this.adapter.setSessionDir(getSessionPath(config.workspace.rootPath, config.session.id));
     }
 
     if (!config.isHeadless) {
@@ -316,7 +326,7 @@ export class PiAgent extends BaseAgent {
     // Build session ID and session dir path upfront (used for spawn env + init command)
     const sessionId = this.config.session?.id || `agent-${Date.now()}`;
     const sessionDir = this.config.session
-      ? join(this.config.workspace.rootPath, 'sessions', sessionId)
+      ? getSessionPath(this.config.workspace.rootPath, sessionId)
       : undefined;
 
     // Build spawn args — optionally preload the network interceptor
@@ -944,6 +954,7 @@ export class PiAgent extends BaseAgent {
       // inject metadata captured from pre_tool_use_request before stripping.
       const toolCallId = event.toolCallId as string | undefined;
       const existingMeta = event.toolMetadata as { intent?: string; displayName?: string } | undefined;
+      let usedBridgeCache = false;
       if (toolCallId && !existingMeta) {
         const cached = this.preToolMetadataByCallId.get(toolCallId);
         if (cached && (cached.intent || cached.displayName)) {
@@ -955,8 +966,19 @@ export class PiAgent extends BaseAgent {
               source: 'interceptor',
             },
           };
+          usedBridgeCache = true;
           this.debug(`Injected pre-tool metadata for ${toolName} (${toolCallId}) from bridge cache`);
         }
+      }
+
+      if (toolCallId && !usedBridgeCache && !existingMeta) {
+        this.pendingToolStartBackfillByCallId.set(toolCallId, {
+          toolName,
+          args: ((event.args ?? {}) as Record<string, unknown>),
+          turnId: typeof event.turnId === 'string' ? event.turnId : undefined,
+          parentToolUseId: typeof event.parentToolUseId === 'string' ? event.parentToolUseId : undefined,
+        });
+        this.debug(`Queued tool_start metadata backfill for ${toolName} (${toolCallId})`);
       }
     }
 
@@ -964,6 +986,7 @@ export class PiAgent extends BaseAgent {
       const toolCallId = event.toolCallId as string | undefined;
       if (toolCallId) {
         this.preToolMetadataByCallId.delete(toolCallId);
+        this.pendingToolStartBackfillByCallId.delete(toolCallId);
       }
     }
 
@@ -1015,6 +1038,9 @@ export class PiAgent extends BaseAgent {
     const { requestId, toolName, toolCallId, input } = req;
     const debugSessionId = this.config.session?.id || this._sessionId;
     this.debug(`PreToolUse request from subprocess: ${toolName} (${requestId}, sessionId=${debugSessionId})`);
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      this.debug(`[tool-title-debug][main] pre_tool_use payload ${toolName} (${toolCallId ?? 'no-call-id'}, sessionId=${debugSessionId}) keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0}`);
+    }
 
     // Capture metadata BEFORE centralized checks strip it out.
     // This bridge is deterministic and avoids relying solely on side-channel store lookups.
@@ -1027,6 +1053,22 @@ export class PiAgent extends BaseAgent {
         capturedAt: Date.now(),
       });
       this.debug(`Captured pre-tool metadata for ${toolName} (${toolCallId}, sessionId=${debugSessionId}): intent=${!!preIntent}, displayName=${!!preDisplayName}`);
+
+      const pendingBackfill = this.pendingToolStartBackfillByCallId.get(toolCallId);
+      if (pendingBackfill) {
+        this.eventQueue.enqueue({
+          type: 'tool_start',
+          toolName: pendingBackfill.toolName,
+          toolUseId: toolCallId,
+          input: pendingBackfill.args,
+          intent: preIntent,
+          displayName: preDisplayName,
+          turnId: pendingBackfill.turnId,
+          parentToolUseId: pendingBackfill.parentToolUseId,
+        });
+        this.pendingToolStartBackfillByCallId.delete(toolCallId);
+        this.debug(`Backfilled tool_start metadata for ${toolName} (${toolCallId}, sessionId=${debugSessionId})`);
+      }
     }
 
     // Fire PreToolUse automation event — await so automations run before tool executes
@@ -1565,6 +1607,7 @@ export class PiAgent extends BaseAgent {
 
     // Drop any cached pre-tool metadata for the dead subprocess.
     this.preToolMetadataByCallId.clear();
+    this.pendingToolStartBackfillByCallId.clear();
   }
 
   /**
@@ -1949,6 +1992,7 @@ export class PiAgent extends BaseAgent {
 
     // Clear bridge cache for this interrupted turn.
     this.preToolMetadataByCallId.clear();
+    this.pendingToolStartBackfillByCallId.clear();
   }
 
   forceAbort(reason: AbortReason): void {
@@ -1975,6 +2019,7 @@ export class PiAgent extends BaseAgent {
 
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
+    this.pendingToolStartBackfillByCallId.clear();
 
     // For PlanSubmitted and AuthRequest, just interrupt the turn
     if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
@@ -2023,6 +2068,8 @@ export class PiAgent extends BaseAgent {
 
   override clearHistory(): void {
     this.piSessionId = null;
+    this.preToolMetadataByCallId.clear();
+    this.pendingToolStartBackfillByCallId.clear();
     this.killSubprocess();
     super.clearHistory();
     this.debug('History cleared - next chat will start new subprocess');

@@ -17,7 +17,7 @@ import {
   renameSync,
   cpSync,
 } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
@@ -91,6 +91,20 @@ export function getWorkspaceSkillsPath(rootPath: string): string {
   return join(getWorkspaceDataPath(rootPath), 'skills');
 }
 
+/**
+ * Get path to workspace-scoped config.json stored under the workspace data dir.
+ */
+export function getWorkspaceConfigPath(rootPath: string): string {
+  return join(getWorkspaceDataPath(rootPath), 'config.json');
+}
+
+/**
+ * Get path to workspace SDK plugin manifest stored under the workspace data dir.
+ */
+export function getWorkspacePluginManifestPath(rootPath: string): string {
+  return join(getWorkspaceDataPath(rootPath), '.claude-plugin', 'plugin.json');
+}
+
 // ============================================================
 // Config Operations
 // ============================================================
@@ -100,7 +114,7 @@ export function getWorkspaceSkillsPath(rootPath: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
-  const configPath = join(rootPath, 'config.json');
+  const configPath = getWorkspaceConfigPath(rootPath);
   if (!existsSync(configPath)) return null;
 
   try {
@@ -163,7 +177,9 @@ export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): 
   }
 
   // Use atomic write to prevent corruption on crash/interrupt
-  atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(storageConfig, null, 2));
+  const configPath = getWorkspaceConfigPath(rootPath);
+  mkdirSync(dirname(configPath), { recursive: true });
+  atomicWriteFileSync(configPath, JSON.stringify(storageConfig, null, 2));
 }
 
 // ============================================================
@@ -365,7 +381,7 @@ export function deleteWorkspaceFolder(rootPath: string): boolean {
  * @param rootPath - Absolute path to check
  */
 export function isValidWorkspace(rootPath: string): boolean {
-  return existsSync(join(rootPath, 'config.json'));
+  return existsSync(getWorkspaceConfigPath(rootPath));
 }
 
 /**
@@ -509,12 +525,10 @@ export function isLocalMcpEnabled(rootPath: string): boolean {
  * @param workspaceName - Display name for the workspace (used in plugin name)
  */
 export function ensurePluginManifest(rootPath: string, workspaceName: string): void {
-  const pluginDir = join(rootPath, '.claude-plugin');
-  const manifestPath = join(pluginDir, 'plugin.json');
-
+  const manifestPath = getWorkspacePluginManifestPath(rootPath);
   if (existsSync(manifestPath)) return;
 
-  // Create .claude-plugin directory
+  const pluginDir = dirname(manifestPath);
   if (!existsSync(pluginDir)) {
     mkdirSync(pluginDir, { recursive: true });
   }

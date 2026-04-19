@@ -41,7 +41,7 @@ import {
   downloadSourceIcon,
 } from '../sources/storage.ts';
 import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissions-config.ts';
-import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath } from '../workspaces/storage.ts';
+import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath, getWorkspaceSessionsPath } from '../workspaces/storage.ts';
 import { WORKSPACE_DATA_DIR } from '../workspaces/data-path.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
@@ -203,6 +203,7 @@ export class ConfigWatcher {
   private workspaceDir: string;
   private sourcesDir: string;
   private skillsDir: string;
+  private sessionsDir: string;
 
   constructor(workspaceIdOrPath: string, callbacks: ConfigWatcherCallbacks) {
     this.callbacks = callbacks;
@@ -219,6 +220,7 @@ export class ConfigWatcher {
     }
     this.sourcesDir = getWorkspaceSourcesPath(this.workspaceDir);
     this.skillsDir = getWorkspaceSkillsPath(this.workspaceDir);
+    this.sessionsDir = getWorkspaceSessionsPath(this.workspaceDir);
   }
 
   /**
@@ -935,7 +937,7 @@ export class ConfigWatcher {
    * made by other instances, scripts, or manual edits.
    */
   private handleSessionMetadataChange(sessionId: string): void {
-    const sessionFile = join(this.workspaceDir, 'sessions', sessionId, 'session.jsonl');
+    const sessionFile = join(this.sessionsDir, sessionId, 'session.jsonl');
 
     if (!existsSync(sessionFile)) {
       return;

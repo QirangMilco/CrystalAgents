@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 // ============================================================================
 // CONSTANTS
@@ -274,7 +274,11 @@ function readMetadataFileFromDir(dir: string): Record<string, ToolMetadata> {
     const data = readFileSync(filePath, 'utf-8');
     return JSON.parse(data) as Record<string, ToolMetadata>;
   } catch (error) {
-    debugLog(`[toolMetadataStore.read] Failed for dir=${dir}: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    debugLog(`[toolMetadataStore.read] Failed for dir=${dir}: ${message}`);
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      console.error(`[tool-title-debug][store] read-fail dir=${dir} file=${join(dir, 'tool-metadata.json')} error=${message}`);
+    }
     return {};
   }
 }
@@ -293,12 +297,21 @@ function writeMetadataFile(allMetadata: Record<string, ToolMetadata>): void {
   const filePath = getMetadataFilePath();
   if (!filePath) return;
   try {
+    mkdirSync(dirname(filePath), { recursive: true });
     const tmpPath = filePath + '.tmp';
-    writeFileSync(tmpPath, JSON.stringify(allMetadata));
+    const payload = JSON.stringify(allMetadata);
+    writeFileSync(tmpPath, payload, 'utf-8');
     renameSync(tmpPath, filePath);
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      console.error(`[tool-title-debug][store] write-ok file=${filePath} bytes=${Buffer.byteLength(payload, 'utf8')} entries=${Object.keys(allMetadata).length}`);
+    }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // Keep non-throwing behavior, but log for diagnostics.
-    debugLog(`[toolMetadataStore.write] Failed for file=${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+    debugLog(`[toolMetadataStore.write] Failed for file=${filePath}: ${message}`);
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      console.error(`[tool-title-debug][store] write-fail file=${filePath} error=${message}`);
+    }
   }
 }
 
@@ -338,6 +351,9 @@ export const toolMetadataStore = {
     for (const [id, meta] of Object.entries(all)) {
       _metadataMap.set(id, meta);
     }
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      console.error(`[tool-title-debug][store] setSessionDir dir=${dir} file=${join(dir, 'tool-metadata.json')} preloaded=${Object.keys(all).length}`);
+    }
   },
 
   /** Store metadata — writes to in-memory Map + cached file */
@@ -346,6 +362,9 @@ export const toolMetadataStore = {
     mergeAndWriteMetadata((all) => {
       all[toolUseId] = metadata;
     });
+    if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      console.error(`[tool-title-debug][store] set id=${toolUseId} dir=${_sessionDir || '∅'} file=${getMetadataFilePath() || '∅'} hasDisplayName=${metadata.displayName ? 1 : 0} hasIntent=${metadata.intent ? 1 : 0} inMemorySize=${_metadataMap.size}`);
+    }
   },
 
   /**
@@ -355,17 +374,32 @@ export const toolMetadataStore = {
    */
   get(toolUseId: string, sessionDir?: string): ToolMetadata | undefined {
     const inMemory = _metadataMap.get(toolUseId);
-    if (inMemory) return inMemory;
+    if (inMemory) {
+      if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+        console.error(`[tool-title-debug][store] get-hit-memory id=${toolUseId} requestedDir=${sessionDir || '∅'} activeDir=${_sessionDir || '∅'} hasDisplayName=${inMemory.displayName ? 1 : 0} hasIntent=${inMemory.intent ? 1 : 0}`);
+      }
+      return inMemory;
+    }
 
     // Read from explicit sessionDir if provided, otherwise fall back to _sessionDir
     const dir = sessionDir || _sessionDir;
-    if (!dir) return undefined;
+    if (!dir) {
+      if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+        console.error(`[tool-title-debug][store] get-miss-no-dir id=${toolUseId} requestedDir=${sessionDir || '∅'} activeDir=${_sessionDir || '∅'}`);
+      }
+      return undefined;
+    }
 
     const all = readMetadataFileFromDir(dir);
     const entry = all[toolUseId];
     if (entry) {
       // Cache in memory for O(1) subsequent lookups
       _metadataMap.set(toolUseId, entry);
+      if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+        console.error(`[tool-title-debug][store] get-hit-file id=${toolUseId} dir=${dir} file=${join(dir, 'tool-metadata.json')} hasDisplayName=${entry.displayName ? 1 : 0} hasIntent=${entry.intent ? 1 : 0} fileEntries=${Object.keys(all).length}`);
+      }
+    } else if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+      console.error(`[tool-title-debug][store] get-miss-file id=${toolUseId} dir=${dir} file=${join(dir, 'tool-metadata.json')} fileEntries=${Object.keys(all).length}`);
     }
     return entry;
   },

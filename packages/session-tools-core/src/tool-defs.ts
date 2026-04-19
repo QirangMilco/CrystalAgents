@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import type { ZodRawShape } from 'zod';
 import type { SessionToolContext } from './context.ts';
 import type { ToolResult } from './types.ts';
 
@@ -192,6 +193,19 @@ export const ListSessionsSchema = z.object({
   limit: z.number().optional().describe('Max sessions to return (default 20, max 100)'),
   offset: z.number().optional().describe('Skip first N results (for pagination)'),
 });
+
+// ============================================================
+// Schema Metadata Enhancement
+// ============================================================
+
+const SessionToolMetadataShape = {
+  _displayName: z.string().describe('Human-friendly name for this action (2-4 words, e.g., "List Folders", "Search Documents", "Create Task")'),
+  _intent: z.string().describe('Describe what you are trying to accomplish with this tool call (1-2 sentences)'),
+} satisfies ZodRawShape;
+
+function withSessionToolMetadata<T extends ZodRawShape>(schema: z.ZodObject<T>) {
+  return schema.extend(SessionToolMetadataShape);
+}
 
 // ============================================================
 // Canonical Tool Descriptions (base — no DOC_REFS)
@@ -480,31 +494,31 @@ export type SessionToolDef = RegistrySessionToolDef | BackendSessionToolDef;
 // ============================================================
 
 export const SESSION_TOOL_DEFS: SessionToolDef[] = [
-  { name: 'SubmitPlan', description: TOOL_DESCRIPTIONS.SubmitPlan, inputSchema: SubmitPlanSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSubmitPlan },
-  { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: ConfigValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleConfigValidate },
-  { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleSkillValidate },
-  { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
-  { name: 'source_test', description: TOOL_DESCRIPTIONS.source_test, inputSchema: SourceTestSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSourceTest },
-  { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
-  { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
-  { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },
-  { name: 'source_microsoft_oauth_trigger', description: TOOL_DESCRIPTIONS.source_microsoft_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleMicrosoftOAuthTrigger },
-  { name: 'source_credential_prompt', description: TOOL_DESCRIPTIONS.source_credential_prompt, inputSchema: CredentialPromptSchema, executionMode: 'registry', safeMode: 'block', handler: handleCredentialPrompt },
-  { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: UpdatePreferencesSchema, executionMode: 'registry', safeMode: 'block', handler: handleUpdatePreferences },
-  { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: TransformDataSchema, executionMode: 'registry', safeMode: 'allow', handler: handleTransformData },
-  { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', safeMode: 'allow', handler: handleScriptSandbox },
-  { name: 'render_template', description: TOOL_DESCRIPTIONS.render_template, inputSchema: RenderTemplateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleRenderTemplate },
-  { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
-  { name: 'call_llm', description: TOOL_DESCRIPTIONS.call_llm, inputSchema: CallLlmSchema, executionMode: 'backend', safeMode: 'allow', readOnly: true, handler: null },
-  { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', safeMode: 'block', handler: null },
+  { name: 'SubmitPlan', description: TOOL_DESCRIPTIONS.SubmitPlan, inputSchema: withSessionToolMetadata(SubmitPlanSchema), executionMode: 'registry', safeMode: 'allow', handler: handleSubmitPlan },
+  { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: withSessionToolMetadata(ConfigValidateSchema), executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleConfigValidate },
+  { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: withSessionToolMetadata(SkillValidateSchema), executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleSkillValidate },
+  { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: withSessionToolMetadata(MermaidValidateSchema), executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
+  { name: 'source_test', description: TOOL_DESCRIPTIONS.source_test, inputSchema: withSessionToolMetadata(SourceTestSchema), executionMode: 'registry', safeMode: 'allow', handler: handleSourceTest },
+  { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: withSessionToolMetadata(SourceOAuthTriggerSchema), executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
+  { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: withSessionToolMetadata(SourceOAuthTriggerSchema), executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
+  { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: withSessionToolMetadata(SourceOAuthTriggerSchema), executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },
+  { name: 'source_microsoft_oauth_trigger', description: TOOL_DESCRIPTIONS.source_microsoft_oauth_trigger, inputSchema: withSessionToolMetadata(SourceOAuthTriggerSchema), executionMode: 'registry', safeMode: 'block', handler: handleMicrosoftOAuthTrigger },
+  { name: 'source_credential_prompt', description: TOOL_DESCRIPTIONS.source_credential_prompt, inputSchema: withSessionToolMetadata(CredentialPromptSchema), executionMode: 'registry', safeMode: 'block', handler: handleCredentialPrompt },
+  { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: withSessionToolMetadata(UpdatePreferencesSchema), executionMode: 'registry', safeMode: 'block', handler: handleUpdatePreferences },
+  { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: withSessionToolMetadata(TransformDataSchema), executionMode: 'registry', safeMode: 'allow', handler: handleTransformData },
+  { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: withSessionToolMetadata(ScriptSandboxSchema), executionMode: 'registry', safeMode: 'allow', handler: handleScriptSandbox },
+  { name: 'render_template', description: TOOL_DESCRIPTIONS.render_template, inputSchema: withSessionToolMetadata(RenderTemplateSchema), executionMode: 'registry', safeMode: 'allow', handler: handleRenderTemplate },
+  { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: withSessionToolMetadata(SendDeveloperFeedbackSchema), executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
+  { name: 'call_llm', description: TOOL_DESCRIPTIONS.call_llm, inputSchema: withSessionToolMetadata(CallLlmSchema), executionMode: 'backend', safeMode: 'allow', readOnly: true, handler: null },
+  { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: withSessionToolMetadata(SpawnSessionSchema), executionMode: 'backend', safeMode: 'block', handler: null },
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.
-  { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: BrowserToolSchema, executionMode: 'backend', safeMode: 'allow', handler: null },
+  { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: withSessionToolMetadata(BrowserToolSchema), executionMode: 'backend', safeMode: 'allow', handler: null },
   // Session self-management tools (registry — use context callbacks to reach SessionManager)
-  { name: 'set_session_labels', description: TOOL_DESCRIPTIONS.set_session_labels, inputSchema: SetSessionLabelsSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionLabels },
-  { name: 'set_session_status', description: TOOL_DESCRIPTIONS.set_session_status, inputSchema: SetSessionStatusSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionStatus },
-  { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSessionInfo },
-  { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListSessions },
+  { name: 'set_session_labels', description: TOOL_DESCRIPTIONS.set_session_labels, inputSchema: withSessionToolMetadata(SetSessionLabelsSchema), executionMode: 'registry', safeMode: 'block', handler: handleSetSessionLabels },
+  { name: 'set_session_status', description: TOOL_DESCRIPTIONS.set_session_status, inputSchema: withSessionToolMetadata(SetSessionStatusSchema), executionMode: 'registry', safeMode: 'block', handler: handleSetSessionStatus },
+  { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: withSessionToolMetadata(GetSessionInfoSchema), executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSessionInfo },
+  { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: withSessionToolMetadata(ListSessionsSchema), executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListSessions },
 ];
 
 export interface SessionToolFilterOptions {

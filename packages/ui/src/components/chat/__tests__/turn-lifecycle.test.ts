@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { deriveTurnPhase, groupMessagesByTurn, type AssistantTurn } from '../turn-utils'
+import { deriveTurnPhase, getAssistantTurnUiKey, groupMessagesByTurn, type AssistantTurn } from '../turn-utils'
 import type { Message } from '@craft-agent/core'
 
 // ============================================================================
@@ -147,6 +147,30 @@ describe('turn lifecycle scenarios', () => {
       turns = groupMessagesByTurn(messages)
       assistantTurn = getLastAssistantTurn(turns)!
       expect(deriveTurnPhase(assistantTurn)).toBe('complete')
+    })
+
+    it('keeps the same assistant UI key when final response starts streaming', () => {
+      resetCounters()
+      turnIdCounter++
+
+      let messages: Message[] = [createUserMessage(), createToolMessage('running')]
+
+      messages = updateMessage(messages, 'tool-2', {
+        toolStatus: 'completed',
+        toolResult: 'File contents...',
+      })
+      let turns = groupMessagesByTurn(messages)
+      let assistantTurn = getLastAssistantTurn(turns)!
+      const keyBeforeResponse = getAssistantTurnUiKey(assistantTurn, turns.length - 1)
+
+      messages = [...messages, createAssistantMessage(true)]
+      turns = groupMessagesByTurn(messages)
+      assistantTurn = getLastAssistantTurn(turns)!
+      const keyDuringStreamingResponse = getAssistantTurnUiKey(assistantTurn, turns.length - 1)
+
+      expect(deriveTurnPhase(assistantTurn)).toBe('streaming')
+      expect(assistantTurn.activities).toHaveLength(1)
+      expect(keyDuringStreamingResponse).toBe(keyBeforeResponse)
     })
   })
 

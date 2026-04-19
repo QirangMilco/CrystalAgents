@@ -18,7 +18,7 @@ import {
   type BrowserEmptyStateLaunchResult,
   type BrowserInstanceInfo,
 } from '../shared/types'
-import { DEFAULT_THEME, loadAppTheme } from '@craft-agent/shared/config'
+import { DEFAULT_THEME, loadAppTheme, getAppVariant } from '@craft-agent/shared/config'
 import { getBrowserLiveFxCornerRadii } from '../shared/browser-live-fx'
 import type { IBrowserPaneManager } from '@craft-agent/server-core/handlers'
 
@@ -43,7 +43,8 @@ const THEME_COLOR_NULL_SENTINEL = '__NULL__'
 const THEME_OBSERVER_MIN_INTERVAL_MS = 120
 const EARLY_THEME_EXTRACTION_DELAY_MS = 100
 const BROWSER_EMPTY_STATE_PAGE = 'browser-empty-state.html'
-const CRAFT_DEEPLINK_SCHEME_PREFIX = `${process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'}://`
+const browserVariant = getAppVariant()
+const CRAFT_DEEPLINK_SCHEME_PREFIX = `${process.env.CRAFT_DEEPLINK_SCHEME || browserVariant.deeplinkScheme || 'craftagents'}://`
 
 const THEME_COLOR_EXTRACTOR_FN = String.raw`
 () => {

@@ -8,6 +8,7 @@ export interface AppVariantConfig {
   bundleDisplayName: string;
   artifactNamePrefix: string;
   dmgTitle: string;
+  deeplinkScheme: string;
   configDirName: string;
   workspaceDataDirName: string;
   update: {
@@ -30,6 +31,7 @@ const DEFAULT_APP_VARIANT: AppVariantConfig = {
   bundleDisplayName: 'Craft Agents',
   artifactNamePrefix: 'Craft-Agents',
   dmgTitle: 'Craft Agents',
+  deeplinkScheme: 'craftagents',
   configDirName: '.craft-agent',
   workspaceDataDirName: '.craft-agents',
   update: {

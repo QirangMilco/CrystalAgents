@@ -15,6 +15,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { qualifySkillName, AGENTS_PLUGIN_NAME } from '../core/index.ts'
 import { extractWorkspaceSlug, readPluginName } from '../../utils/workspace.ts'
+import { getWorkspaceDataPath } from '../../workspaces/data-path.ts'
 
 // ============================================================================
 // readPluginName — reads SDK plugin name from .claude-plugin/plugin.json
@@ -27,10 +28,11 @@ describe('readPluginName', () => {
     rmSync(testDir, { recursive: true, force: true })
   })
 
-  it('reads plugin name from .claude-plugin/plugin.json', () => {
+  it('reads plugin name from workspaceDataDirName/.claude-plugin/plugin.json', () => {
     const wsDir = join(testDir, 'ws-with-plugin')
-    mkdirSync(join(wsDir, '.claude-plugin'), { recursive: true })
-    writeFileSync(join(wsDir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'craft-workspace-default', version: '1.0.0' }))
+    const manifestDir = join(getWorkspaceDataPath(wsDir), '.claude-plugin')
+    mkdirSync(manifestDir, { recursive: true })
+    writeFileSync(join(manifestDir, 'plugin.json'), JSON.stringify({ name: 'craft-workspace-default', version: '1.0.0' }))
     expect(readPluginName(wsDir)).toBe('craft-workspace-default')
   })
 
@@ -42,15 +44,17 @@ describe('readPluginName', () => {
 
   it('returns null when plugin.json has no name field', () => {
     const wsDir = join(testDir, 'ws-no-name')
-    mkdirSync(join(wsDir, '.claude-plugin'), { recursive: true })
-    writeFileSync(join(wsDir, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '1.0.0' }))
+    const manifestDir = join(getWorkspaceDataPath(wsDir), '.claude-plugin')
+    mkdirSync(manifestDir, { recursive: true })
+    writeFileSync(join(manifestDir, 'plugin.json'), JSON.stringify({ version: '1.0.0' }))
     expect(readPluginName(wsDir)).toBeNull()
   })
 
   it('returns null for invalid JSON', () => {
     const wsDir = join(testDir, 'ws-bad-json')
-    mkdirSync(join(wsDir, '.claude-plugin'), { recursive: true })
-    writeFileSync(join(wsDir, '.claude-plugin', 'plugin.json'), 'not json')
+    const manifestDir = join(getWorkspaceDataPath(wsDir), '.claude-plugin')
+    mkdirSync(manifestDir, { recursive: true })
+    writeFileSync(join(manifestDir, 'plugin.json'), 'not json')
     expect(readPluginName(wsDir)).toBeNull()
   })
 })
@@ -65,8 +69,9 @@ describe('workspace slug extraction', () => {
   it('reads plugin name from plugin.json when available', () => {
     const testDir2 = join(tmpdir(), `slug-plugin-test-${Date.now()}`)
     const wsDir = join(testDir2, 'bd1675ea-4ba1-96e0-3de4-22c803b11e0d')
-    mkdirSync(join(wsDir, '.claude-plugin'), { recursive: true })
-    writeFileSync(join(wsDir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'craft-workspace-default', version: '1.0.0' }))
+    const manifestDir = join(getWorkspaceDataPath(wsDir), '.claude-plugin')
+    mkdirSync(manifestDir, { recursive: true })
+    writeFileSync(join(manifestDir, 'plugin.json'), JSON.stringify({ name: 'craft-workspace-default', version: '1.0.0' }))
     expect(extractWorkspaceSlug(wsDir, fallback)).toBe('craft-workspace-default')
     rmSync(testDir2, { recursive: true, force: true })
   })
@@ -100,6 +105,16 @@ describe('workspace slug extraction', () => {
 
   it('handles Windows-style paths with forward slashes', () => {
     expect(extractWorkspaceSlug('C:/Users/foo/workspace', fallback)).toBe('workspace')
+  })
+
+  it('ignores legacy root .claude-plugin/plugin.json', () => {
+    const testDir2 = join(tmpdir(), `slug-plugin-legacy-test-${Date.now()}`)
+    const wsDir = join(testDir2, 'legacy-root-plugin')
+    mkdirSync(join(wsDir, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(wsDir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'legacy-root-plugin', version: '1.0.0' }))
+    expect(readPluginName(wsDir)).toBeNull()
+    expect(extractWorkspaceSlug(wsDir, fallback)).toBe('legacy-root-plugin')
+    rmSync(testDir2, { recursive: true, force: true })
   })
 
   it('handles Windows-style paths with backslashes', () => {
