@@ -2561,6 +2561,8 @@ function AppShellContent({
           workspaceUnreadMap={workspaceUnreadMap}
           onWorkspaceCreated={() => onRefreshWorkspaces?.()}
           onWorkspaceRemoved={() => onRefreshWorkspaces?.()}
+          onImportWorkspaceData={(mode) => { void (mode === 'auto' ? handleWorkspaceRecordImportAuto() : handleWorkspaceRecordImportManual()) }}
+          isImportingWorkspaceData={isImportingWorkspaceRecords}
           activeSessionId={effectiveSessionId}
           onNewChat={() => handleNewChat()}
           onNewWindow={() => window.electronAPI.menuNewWindow()}
@@ -2982,26 +2984,6 @@ function AppShellContent({
                           onClick={() => handleNewChat()}
                         />
                       )}
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <HeaderIconButton
-                            icon={<DatabaseZap className="h-4 w-4" />}
-                            tooltip={t('session.workspaceRecordImportAction')}
-                            aria-label={t('session.workspaceRecordImportAction')}
-                            disabled={!activeWorkspaceId || isImportingWorkspaceRecords}
-                          />
-                        </DropdownMenuTrigger>
-                        <StyledDropdownMenuContent align="end" light minWidth="min-w-[220px]">
-                          <StyledDropdownMenuItem onClick={() => void handleWorkspaceRecordImportAuto()}>
-                            <DatabaseZap className="h-3.5 w-3.5" />
-                            <span className="flex-1">{t('session.workspaceRecordImportAutoMode')}</span>
-                          </StyledDropdownMenuItem>
-                          <StyledDropdownMenuItem onClick={() => void handleWorkspaceRecordImportManual()}>
-                            <FolderOpen className="h-3.5 w-3.5" />
-                            <span className="flex-1">{t('session.workspaceRecordImportManualMode')}</span>
-                          </StyledDropdownMenuItem>
-                        </StyledDropdownMenuContent>
-                      </DropdownMenu>
                       <DropdownMenu onOpenChange={(open) => { if (!open) { setFilterDropdownQuery(''); setFilterAltHeld(false) } }}>
                       <DropdownMenuTrigger asChild>
                         <HeaderIconButton
@@ -4047,7 +4029,7 @@ function AppShellContent({
                   <AnimatedCollapsibleContent isOpen={isOpen} className="overflow-hidden">
                     <div className="border-t border-border/60 px-3 py-2 space-y-2 bg-muted/10">
                       {(workspaceImportDialogPhase === 'preview' ? group.items : resultItems).length === 0 ? (
-                        <div className="text-sm text-muted-foreground">{t('session.workspaceRecordImportEmptyGroup')}</div>
+                        <div className="text-sm text-muted-foreground">{group.totalCount === 0 ? t('session.workspaceRecordImportEmptyGroupZero') : t('session.workspaceRecordImportEmptyGroup')}</div>
                       ) : workspaceImportDialogPhase === 'preview' ? (
                         group.items.map((item) => (
                           <div key={item.id} className="flex items-center justify-between gap-3 text-sm">

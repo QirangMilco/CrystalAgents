@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { useState, useCallback, useRef } from "react"
-import { Check, FolderPlus, ExternalLink, ChevronDown, Cloud, CloudOff, Trash2 } from "lucide-react"
+import { Check, FolderPlus, ExternalLink, ChevronDown, Cloud, CloudOff, Trash2, DatabaseZap, FolderOpen } from "lucide-react"
 import { AnimatePresence } from "motion/react"
 import { useSetAtom } from "jotai"
 import { toast } from "sonner"
@@ -11,9 +11,12 @@ import { fullscreenOverlayOpenAtom } from "@/atoms/overlay"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
+  DropdownMenuSub,
   StyledDropdownMenuContent,
   StyledDropdownMenuItem,
   StyledDropdownMenuSeparator,
+  StyledDropdownMenuSubContent,
+  StyledDropdownMenuSubTrigger,
 } from "@/components/ui/styled-dropdown"
 import { CrossfadeAvatar } from "@/components/ui/avatar"
 import { FadingText } from "@/components/ui/fading-text"
@@ -31,6 +34,8 @@ interface WorkspaceSwitcherProps {
   onSelect: (workspaceId: string, openInNewWindow?: boolean) => void | Promise<void>
   onWorkspaceCreated?: (workspace: Workspace) => void
   onWorkspaceRemoved?: () => void
+  onImportWorkspaceData?: (mode: 'auto' | 'manual') => void
+  isImportingWorkspaceData?: boolean
   /** workspaceId -> has unread */
   workspaceUnreadMap?: Record<string, boolean>
 }
@@ -50,6 +55,8 @@ export function WorkspaceSwitcher({
   onSelect,
   onWorkspaceCreated,
   onWorkspaceRemoved,
+  onImportWorkspaceData,
+  isImportingWorkspaceData,
   workspaceUnreadMap,
 }: WorkspaceSwitcherProps) {
   const { t } = useTranslation()
@@ -319,7 +326,33 @@ export function WorkspaceSwitcher({
             )
           })}
 
-          {/* Separator and New Workspace option */}
+          <StyledDropdownMenuSeparator />
+          <DropdownMenuSub>
+            <StyledDropdownMenuSubTrigger
+              disabled={!activeWorkspaceId || !onImportWorkspaceData || isImportingWorkspaceData}
+            >
+              <DatabaseZap className="h-4 w-4" />
+              {t('session.workspaceRecordImportAction')}
+            </StyledDropdownMenuSubTrigger>
+            <StyledDropdownMenuSubContent minWidth="min-w-[220px]">
+              <StyledDropdownMenuItem
+                onClick={() => onImportWorkspaceData?.('auto')}
+                className="font-sans"
+                disabled={!activeWorkspaceId || !onImportWorkspaceData || isImportingWorkspaceData}
+              >
+                <DatabaseZap className="h-4 w-4" />
+                {t('session.workspaceRecordImportAutoMode')}
+              </StyledDropdownMenuItem>
+              <StyledDropdownMenuItem
+                onClick={() => onImportWorkspaceData?.('manual')}
+                className="font-sans"
+                disabled={!activeWorkspaceId || !onImportWorkspaceData || isImportingWorkspaceData}
+              >
+                <FolderOpen className="h-4 w-4" />
+                {t('session.workspaceRecordImportManualMode')}
+              </StyledDropdownMenuItem>
+            </StyledDropdownMenuSubContent>
+          </DropdownMenuSub>
           <StyledDropdownMenuSeparator />
           <StyledDropdownMenuItem
             onClick={handleNewWorkspace}

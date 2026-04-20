@@ -939,6 +939,36 @@ function mergePreviewGroups(groups: WorkspaceRecordImportPreviewGroup[]): Worksp
   return Array.from(merged.values());
 }
 
+function createEmptyPreviewGroup(category: WorkspaceRecordImportCategory, workspaceDataDir: string): WorkspaceRecordImportPreviewGroup {
+  const meta = IMPORT_GROUP_META[category];
+  const entryName = category === 'permissions'
+    ? 'permissions.json'
+    : category === 'views'
+      ? 'views.json'
+      : category === 'automations'
+        ? 'automations.json'
+        : category === 'automations-history'
+          ? 'automations-history.jsonl'
+          : category === 'automations-retry-queue'
+            ? 'automations-retry-queue.jsonl'
+            : category === 'events'
+              ? 'events.jsonl'
+              : category;
+
+  return {
+    id: category,
+    name: meta.name,
+    sourcePath: '',
+    targetPath: join(workspaceDataDir, entryName),
+    kind: meta.kind,
+    targetExists: false,
+    totalCount: 0,
+    importableCount: 0,
+    skippedCount: 0,
+    items: [],
+  };
+}
+
 function detectWorkspaceRecordImportStatusFromCandidates(
   rootPath: string,
   sourcePath: string,
@@ -990,7 +1020,10 @@ function detectWorkspaceRecordImportStatusFromCandidates(
     if (!found) missingEntries.add(fileName);
   }
 
-  const mergedPreviewGroups = mergePreviewGroups(previewGroups).filter(group => group.totalCount > 0);
+  const mergedPreviewGroups = mergePreviewGroups(previewGroups);
+  const orderedPreviewGroups = (Object.keys(IMPORT_GROUP_META) as WorkspaceRecordImportCategory[]).map((category) => {
+    return mergedPreviewGroups.find(group => group.id === category) ?? createEmptyPreviewGroup(category, workspaceDataDir);
+  });
 
   return {
     sourcePath,
@@ -1000,7 +1033,7 @@ function detectWorkspaceRecordImportStatusFromCandidates(
     hasImportableData: mergedPreviewGroups.some(group => group.totalCount > 0),
     availableEntries,
     missingEntries: Array.from(missingEntries),
-    previewGroups: mergedPreviewGroups,
+    previewGroups: orderedPreviewGroups,
   };
 }
 
