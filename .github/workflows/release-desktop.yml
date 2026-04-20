@@ -4,11 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       release_number:
-        description: "发布序号；正式版生成 0.8.7.1，预发布生成 0.8.7-rc.1"
+        description: "版本序号。例如填 1：正式版会生成 0.8.7.1，预发布会生成 0.8.7-rc.1"
         required: true
         type: string
+      draft:
+        description: "是否创建为草稿发布"
+        required: true
+        default: true
+        type: boolean
       prerelease:
-        description: "是否发布为预发布版本"
+        description: "是否标记为预发布"
         required: true
         default: false
         type: boolean
@@ -288,8 +293,11 @@ jobs:
               --target "$GITHUB_SHA"
               --title "$RELEASE_TITLE"
               --notes "Release $RELEASE_VERSION"
-              --draft
             )
+
+            if [[ '${{ inputs.draft }}' == 'true' ]]; then
+              CREATE_ARGS+=(--draft)
+            fi
 
             if [[ '${{ inputs.prerelease }}' == 'true' ]]; then
               CREATE_ARGS+=(--prerelease)
