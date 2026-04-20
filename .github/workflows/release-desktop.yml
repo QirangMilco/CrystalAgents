@@ -250,6 +250,7 @@ jobs:
       - build-macos
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
       RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
       RELEASE_TITLE: ${{ needs.prepare-release.outputs.release_title }}
@@ -278,9 +279,9 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists, uploading assets"
-            gh release upload "$RELEASE_TAG" "${FILES[@]}" --clobber
+            gh release upload "$RELEASE_TAG" "${FILES[@]}" --clobber --repo "$GH_REPO"
           else
             echo "Creating draft release $RELEASE_TAG"
             CREATE_ARGS=(
@@ -294,5 +295,5 @@ jobs:
               CREATE_ARGS+=(--prerelease)
             fi
 
-            gh release create "$RELEASE_TAG" "${FILES[@]}" "${CREATE_ARGS[@]}"
+            gh release create "$RELEASE_TAG" "${FILES[@]}" "${CREATE_ARGS[@]}" --repo "$GH_REPO"
           fi
