@@ -36,6 +36,7 @@ import { FEATURE_FLAGS } from '../../feature-flags.ts';
 import { AGENTS_PLUGIN_NAME } from '../../skills/types.ts';
 import { GLOBAL_AGENT_SKILLS_DIR, PROJECT_AGENT_SKILLS_DIR } from '../../skills/storage.ts';
 import { getWorkspaceSkillsPath } from '../../workspaces/storage.ts';
+import { SESSION_TOOL_NAMES } from '@craft-agent/session-tools-core';
 import {
   shouldAllowToolInMode,
   isApiEndpointAllowed,
@@ -306,6 +307,14 @@ export function stripToolMetadata(
   const hasMetadata = '_intent' in input || '_displayName' in input;
 
   if (!hasMetadata) {
+    return { modified: false, input };
+  }
+
+  // Session tools validate these fields as part of their public schema.
+  // Preserve metadata both for prefixed MCP names (mcp__session__SubmitPlan)
+  // and bare canonical names (SubmitPlan) used in backend execution paths.
+  if (toolName.startsWith('mcp__session__') || SESSION_TOOL_NAMES.has(toolName)) {
+    onDebug?.(`Preserved tool metadata for ${toolName}: _intent=${!!input._intent}, _displayName=${!!input._displayName}`);
     return { modified: false, input };
   }
 

@@ -81,6 +81,37 @@ import type { McpClientPool } from '../mcp/mcp-pool.ts';
 import { join } from 'path';
 import { homedir } from 'os';
 
+function normalizeSessionToolMetadataArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...args };
+
+  const displayName = typeof normalized._displayName === 'string'
+    ? normalized._displayName
+    : typeof normalized.displayName === 'string'
+      ? normalized.displayName
+      : undefined;
+
+  const intent = typeof normalized._intent === 'string'
+    ? normalized._intent
+    : typeof normalized.intent === 'string'
+      ? normalized.intent
+      : typeof normalized.intention === 'string'
+        ? normalized.intention
+        : undefined;
+
+  if (displayName && typeof normalized._displayName !== 'string') {
+    normalized._displayName = displayName;
+  }
+  if (intent && typeof normalized._intent !== 'string') {
+    normalized._intent = intent;
+  }
+
+  delete normalized.displayName;
+  delete normalized.intent;
+  delete normalized.intention;
+
+  return normalized;
+}
+
 // Session storage (plans folder path)
 import { getSessionDataPath, getSessionPath, getSessionPlansPath } from '../sessions/storage.ts';
 
@@ -316,6 +347,7 @@ export class PiAgent extends BaseAgent {
     const cwd = this.resolvedCwd();
 
     this.debug(`Spawning Pi subprocess: ${nodePath} ${piServerPath}`);
+    this.debug(`[submit-plan-debug][main] spawn pi subprocess env CRAFT_DEBUG_SUBMIT_PLAN=${process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? 'unset'} CRAFT_DEBUG_TOOL_TITLES=${process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset'}`);
     this.resetSubprocessErrorDedup();
 
     // Set up ready promise before spawning
@@ -378,6 +410,7 @@ export class PiAgent extends BaseAgent {
         ...(sessionDir ? { CRAFT_SESSION_DIR: sessionDir } : {}),
         // Propagate debug mode
         CRAFT_DEBUG: (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1') ? '1' : '0',
+        CRAFT_DEBUG_SUBMIT_PLAN: process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? '0',
       },
     });
 
@@ -1041,6 +1074,9 @@ export class PiAgent extends BaseAgent {
     if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
       this.debug(`[tool-title-debug][main] pre_tool_use payload ${toolName} (${toolCallId ?? 'no-call-id'}, sessionId=${debugSessionId}) keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0}`);
     }
+    if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (toolName === 'mcp__session__SubmitPlan' || toolName === 'SubmitPlan')) {
+      this.debug(`[submit-plan-debug][main] pre_tool_use_request tool=${toolName} toolCallId=${toolCallId ?? 'no-call-id'} sessionId=${debugSessionId} keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0} payload=${JSON.stringify(input)}`);
+    }
 
     // Capture metadata BEFORE centralized checks strip it out.
     // This bridge is deterministic and avoids relying solely on side-channel store lookups.
@@ -1108,10 +1144,16 @@ export class PiAgent extends BaseAgent {
 
     switch (checkResult.type) {
       case 'allow':
+        if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (toolName === 'mcp__session__SubmitPlan' || toolName === 'SubmitPlan')) {
+          this.debug(`[submit-plan-debug][main] pre_tool_use_response tool=${toolName} requestId=${requestId} action=allow keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0} payload=${JSON.stringify(input)}`);
+        }
         this.send({ type: 'pre_tool_use_response', requestId, action: 'allow' });
         return;
 
       case 'modify':
+        if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (toolName === 'mcp__session__SubmitPlan' || toolName === 'SubmitPlan')) {
+          this.debug(`[submit-plan-debug][main] pre_tool_use_response tool=${toolName} requestId=${requestId} action=modify keys=${Object.keys(checkResult.input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof checkResult.input._displayName === 'string' ? 1 : 0} hasIntent=${typeof checkResult.input._intent === 'string' ? 1 : 0} payload=${JSON.stringify(checkResult.input)}`);
+        }
         this.send({ type: 'pre_tool_use_response', requestId, action: 'modify', input: checkResult.input });
         return;
 
@@ -1261,6 +1303,8 @@ export class PiAgent extends BaseAgent {
     toolName: string;
     args: Record<string, unknown>;
   }): Promise<void> {
+    const normalizedArgs = normalizeSessionToolMetadataArgs(request.args);
+
     // Prerequisite check: block source tools until guide.md is read
     const prereqResult = this.prerequisiteManager.checkPrerequisites(request.toolName);
     if (!prereqResult.allowed) {
@@ -1273,7 +1317,7 @@ export class PiAgent extends BaseAgent {
     }
 
     try {
-      const result = await this.routeToolCall(request.toolName, request.args);
+      const result = await this.routeToolCall(request.toolName, normalizedArgs);
       this.send({
         type: 'tool_execute_response',
         requestId: request.requestId,
@@ -1312,6 +1356,9 @@ export class PiAgent extends BaseAgent {
       : toolName;
 
     if (SESSION_TOOL_NAMES.has(strippedName)) {
+      if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && strippedName === 'SubmitPlan') {
+        this.debug(`[submit-plan-debug][main] routeToolCall toolName=${toolName} strippedName=${strippedName} keys=${Object.keys(args ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof args._displayName === 'string' ? 1 : 0} hasIntent=${typeof args._intent === 'string' ? 1 : 0} payload=${JSON.stringify(args)}`);
+      }
       return this.executeSessionTool(strippedName, args);
     }
 
@@ -1446,6 +1493,9 @@ export class PiAgent extends BaseAgent {
       }
 
       const ctx = this.getSessionToolContext();
+      if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && toolName === 'SubmitPlan') {
+        this.debug(`[submit-plan-debug][main] executeSessionTool tool=${toolName} keys=${Object.keys(args ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof args._displayName === 'string' ? 1 : 0} hasIntent=${typeof args._intent === 'string' ? 1 : 0} payload=${JSON.stringify(args)}`);
+      }
       const result: SessionToolResult = await def.handler(ctx, args);
 
       // Convert ToolResult to subprocess response format
@@ -1472,7 +1522,12 @@ export class PiAgent extends BaseAgent {
   private handleSessionToolCompleted(msg: Record<string, unknown>): void {
     const toolName = msg.toolName as string;
     const isError = msg.isError as boolean;
+    const content = typeof msg.content === 'string' ? msg.content : '';
+    const args = (msg.args as Record<string, unknown> | undefined) ?? {};
     this.debug(`Session tool completed: ${toolName} (isError=${isError})`);
+    if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (toolName === 'mcp__session__SubmitPlan' || toolName === 'SubmitPlan')) {
+      this.debug(`[submit-plan-debug][main] session_tool_completed tool=${toolName} isError=${isError ? 1 : 0} planPath=${typeof args.planPath === 'string' ? args.planPath : '∅'} content=${JSON.stringify(content)}`);
+    }
     // Callbacks already handled by executeSessionTool() — no-op.
   }
 

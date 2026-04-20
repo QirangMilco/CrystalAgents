@@ -156,7 +156,7 @@ interface OutboundPreToolUseReq {
   input: Record<string, unknown>;
 }
 interface OutboundToolExecReq { type: 'tool_execute_request'; requestId: string; toolName: string; args: Record<string, unknown> }
-interface OutboundSessionToolCompleted { type: 'session_tool_completed'; toolName: string; args: Record<string, unknown>; isError: boolean }
+interface OutboundSessionToolCompleted { type: 'session_tool_completed'; toolName: string; args: Record<string, unknown>; isError: boolean; content?: string }
 interface OutboundMiniResult { type: 'mini_completion_result'; id: string; text: string | null }
 interface OutboundEnsureSessionReadyResult { type: 'ensure_session_ready_result'; id: string; sessionId: string | null }
 interface OutboundCompactResult {
@@ -188,6 +188,37 @@ type OutboundMessage =
   | OutboundSetAutoCompactionResult
   | OutboundSessionIdUpdate
   | OutboundError;
+
+function normalizeSessionToolMetadataArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...args };
+
+  const displayName = typeof normalized._displayName === 'string'
+    ? normalized._displayName
+    : typeof normalized.displayName === 'string'
+      ? normalized.displayName
+      : undefined;
+
+  const intent = typeof normalized._intent === 'string'
+    ? normalized._intent
+    : typeof normalized.intent === 'string'
+      ? normalized.intent
+      : typeof normalized.intention === 'string'
+        ? normalized.intention
+        : undefined;
+
+  if (displayName && typeof normalized._displayName !== 'string') {
+    normalized._displayName = displayName;
+  }
+  if (intent && typeof normalized._intent !== 'string') {
+    normalized._intent = intent;
+  }
+
+  delete normalized.displayName;
+  delete normalized.intent;
+  delete normalized.intention;
+
+  return normalized;
+}
 
 // ============================================================
 // State
@@ -656,9 +687,13 @@ async function requestPreToolUseApproval(
   toolCallId?: string,
 ): Promise<Record<string, unknown>> {
   const requestId = `pi-ptu-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const normalizedInput = normalizeSessionToolMetadataArgs(input);
 
   if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
-    debugLog(`[tool-title-debug][subprocess] pre_tool_use_request ${sdkToolName} (${toolCallId ?? 'no-call-id'}) keys=${Object.keys(input).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0}`);
+    debugLog(`[tool-title-debug][subprocess] pre_tool_use_request ${sdkToolName} (${toolCallId ?? 'no-call-id'}) keys=${Object.keys(normalizedInput).sort().join(',') || '∅'} hasDisplayName=${typeof normalizedInput._displayName === 'string' ? 1 : 0} hasIntent=${typeof normalizedInput._intent === 'string' ? 1 : 0}`);
+  }
+  if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (sdkToolName === 'mcp__session__SubmitPlan' || sdkToolName === 'SubmitPlan')) {
+    debugLog(`[submit-plan-debug][subprocess] pre_tool_use_request tool=${sdkToolName} toolCallId=${toolCallId ?? 'no-call-id'} keys=${Object.keys(normalizedInput).sort().join(',') || '∅'} hasDisplayName=${typeof normalizedInput._displayName === 'string' ? 1 : 0} hasIntent=${typeof normalizedInput._intent === 'string' ? 1 : 0} payload=${JSON.stringify(normalizedInput)}`);
   }
 
   send({
@@ -666,18 +701,23 @@ async function requestPreToolUseApproval(
     requestId,
     toolName: sdkToolName,
     ...(toolCallId ? { toolCallId } : {}),
-    input,
+    input: normalizedInput,
   });
 
   const response = await new Promise<{ action: string; input?: Record<string, unknown>; reason?: string }>((resolve) => {
     pendingPreToolUse.set(requestId, { resolve });
   });
 
+  if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (sdkToolName === 'mcp__session__SubmitPlan' || sdkToolName === 'SubmitPlan')) {
+    const responsePayload = response.action === 'modify' && response.input ? normalizeSessionToolMetadataArgs(response.input) : normalizedInput;
+    debugLog(`[submit-plan-debug][subprocess] pre_tool_use_response tool=${sdkToolName} action=${response.action} keys=${Object.keys(responsePayload).sort().join(',') || '∅'} hasDisplayName=${typeof responsePayload._displayName === 'string' ? 1 : 0} hasIntent=${typeof responsePayload._intent === 'string' ? 1 : 0} payload=${JSON.stringify(responsePayload)}`);
+  }
+
   if (response.action === 'block') {
     throw new Error(response.reason || `Tool "${sdkToolName}" is not allowed`);
   }
 
-  return response.action === 'modify' && response.input ? response.input : input;
+  return response.action === 'modify' && response.input ? normalizeSessionToolMetadataArgs(response.input) : normalizedInput;
 }
 
 function wrapToolsWithHooks(tools: AgentTool<any>[]): AgentTool<any>[] {
@@ -815,6 +855,10 @@ function buildProxyTools(): AgentTool<any>[] {
 
       // Execute via main process
       const requestId = `proxy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (def.name === 'mcp__session__SubmitPlan' || def.name === 'SubmitPlan')) {
+        debugLog(`[submit-plan-debug][subprocess] tool_execute_request tool=${def.name} requestId=${requestId} keys=${Object.keys(approvedInput).sort().join(',') || '∅'} hasDisplayName=${typeof approvedInput._displayName === 'string' ? 1 : 0} hasIntent=${typeof approvedInput._intent === 'string' ? 1 : 0} payload=${JSON.stringify(approvedInput)}`);
+      }
 
       send({
         type: 'tool_execute_request',
@@ -1075,8 +1119,9 @@ async function runMiniCompletion(
 function extractToolExecutionMetadata(args: Record<string, unknown> | undefined): ToolExecutionMetadata | undefined {
   if (!args) return undefined;
 
-  const intent = typeof args._intent === 'string' ? args._intent : undefined;
-  const displayName = typeof args._displayName === 'string' ? args._displayName : undefined;
+  const normalized = normalizeSessionToolMetadataArgs(args);
+  const intent = typeof normalized._intent === 'string' ? normalized._intent : undefined;
+  const displayName = typeof normalized._displayName === 'string' ? normalized._displayName : undefined;
 
   if (!intent && !displayName) return undefined;
 
@@ -1158,11 +1203,19 @@ function handleSessionEvent(event: AgentSessionEvent): void {
     const pending = pendingSessionToolCalls.get(event.toolCallId);
     if (pending) {
       pendingSessionToolCalls.delete(event.toolCallId);
+      const content = Array.isArray(event.result?.content)
+        ? event.result.content
+            .filter((item): item is { type: string; text?: string } => !!item && typeof item === 'object')
+            .filter(item => item.type === 'text' && typeof item.text === 'string')
+            .map(item => item.text)
+            .join('\n')
+        : '';
       send({
         type: 'session_tool_completed',
         toolName: pending.toolName,
         args: pending.arguments,
         isError: !!event.isError,
+        ...(content ? { content } : {}),
       });
     }
   }
@@ -1633,6 +1686,7 @@ async function processMessage(msg: InboundMessage): Promise<void> {
 
 function main(): void {
   debugLog('Pi agent server starting');
+  debugLog(`[submit-plan-debug][subprocess] startup env CRAFT_DEBUG_SUBMIT_PLAN=${process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? 'unset'} CRAFT_DEBUG_TOOL_TITLES=${process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset'}`);
 
   const rl = createInterface({ input: process.stdin });
 

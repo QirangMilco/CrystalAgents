@@ -454,6 +454,32 @@ describe('runPreToolUseChecks', () => {
       }
     });
 
+    it('preserves metadata for session MCP tools', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'mcp__session__SubmitPlan',
+        input: {
+          planPath: '/test/workspace/.crystal-agent/sessions/123/plans/plan.md',
+          _intent: 'submit a plan for review',
+          _displayName: 'Submit Plan',
+        },
+      }));
+
+      expect(result.type).toBe('allow');
+    });
+
+    it('preserves metadata for bare session tool names', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'SubmitPlan',
+        input: {
+          planPath: '/test/workspace/.crystal-agent/sessions/123/plans/plan.md',
+          _intent: 'submit a plan for review',
+          _displayName: 'Submit Plan',
+        },
+      }));
+
+      expect(result.type).toBe('allow');
+    });
+
     it('combines path expansion and metadata stripping', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'Read',

@@ -172,6 +172,11 @@ if (isDebugMode) {
   if (isDebugMode) {
     mainLog.info('CLI tools configured:', { uvBinary: process.env.CRAFT_UV, binDir, scriptsDir, bundledUvExists })
   }
+  mainLog.info('[debug-env] SubmitPlan flags:', {
+    CRAFT_DEBUG_SUBMIT_PLAN: process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? 'unset',
+    CRAFT_DEBUG_TOOL_TITLES: process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset',
+    CRAFT_DEBUG_STREAMING_STEPS: process.env.CRAFT_DEBUG_STREAMING_STEPS ?? 'unset',
+  })
 }
 
 // Register Pi model resolver so llm-connections.ts can resolve Pi models

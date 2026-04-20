@@ -386,6 +386,9 @@ export class McpClientPool {
     }
 
     try {
+      if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && proxyName === 'mcp__session__SubmitPlan') {
+        console.error(`[submit-plan-debug][mcp-pool] callTool proxy=${proxyName} original=${originalName} slug=${slug} keys=${Object.keys(args ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof args._displayName === 'string' ? 1 : 0} hasIntent=${typeof args._intent === 'string' ? 1 : 0} payload=${JSON.stringify(args)}`);
+      }
       const result = await client.callTool(originalName, args) as {
         content?: Array<{ type: string; text?: unknown; data?: string; mimeType?: string }>;
         isError?: boolean;
