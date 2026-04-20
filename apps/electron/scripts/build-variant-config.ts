@@ -46,12 +46,17 @@ function replaceDmgTitle(yaml: string, value: string): string {
 
 function replaceArtifactNames(yaml: string, prefix: string): string {
   const safe = prefix.replace(/"/g, '\\"');
-  const templateExt = `${safe}-\${arch}.\${ext}`.replace(/\\\$\{arch\}/g, '${arch}').replace(/\\\$\{ext\}/g, '${ext}');
-  const templateDmg = `${safe}-\${arch}.dmg`.replace(/\\\$\{arch\}/g, '${arch}');
+  const templateExt = `${safe}-\${version}-\${arch}.\${ext}`
+    .replace(/\\\$\{version\}/g, '${version}')
+    .replace(/\\\$\{arch\}/g, '${arch}')
+    .replace(/\\\$\{ext\}/g, '${ext}');
+  const templateDmg = `${safe}-\${version}-\${arch}.dmg`
+    .replace(/\\\$\{version\}/g, '${version}')
+    .replace(/\\\$\{arch\}/g, '${arch}');
 
   let result = yaml;
-  result = result.replace(/artifactName:\s*"[^"]*\$\{arch\}\.\$\{ext\}"/g, `artifactName: "${templateExt}"`);
-  result = result.replace(/artifactName:\s*"[^"]*\$\{arch\}\.dmg"/g, `artifactName: "${templateDmg}"`);
+  result = result.replace(/artifactName:\s*"[^"]*\$\{version\}-\$\{arch\}\.\$\{ext\}"/g, `artifactName: "${templateExt}"`);
+  result = result.replace(/artifactName:\s*"[^"]*\$\{version\}-\$\{arch\}\.dmg"/g, `artifactName: "${templateDmg}"`);
   return result;
 }
 

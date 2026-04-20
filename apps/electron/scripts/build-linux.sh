@@ -154,34 +154,21 @@ cd "$ELECTRON_DIR"
 npx electron-builder --linux --${ARCH}
 
 # 8. Verify the AppImage was built
-# electron-builder uses Linux-style arch names: x86_64 for x64, aarch64 for arm64
-if [ "$ARCH" = "x64" ]; then
-    LINUX_ARCH="x86_64"
-else
-    LINUX_ARCH="aarch64"
-fi
+APPIMAGE_PATH=$(find "$ELECTRON_DIR/release" -maxdepth 1 -name "*.AppImage" -type f | head -n 1)
 
-# electron-builder outputs: Craft-Agents-x86_64.AppImage or Craft-Agents-aarch64.AppImage
-BUILT_APPIMAGE_NAME="Craft-Agents-${LINUX_ARCH}.AppImage"
-BUILT_APPIMAGE_PATH="$ELECTRON_DIR/release/$BUILT_APPIMAGE_NAME"
-
-if [ ! -f "$BUILT_APPIMAGE_PATH" ]; then
-    echo "ERROR: Expected AppImage not found at $BUILT_APPIMAGE_PATH"
+if [ -z "$APPIMAGE_PATH" ] || [ ! -f "$APPIMAGE_PATH" ]; then
+    echo "ERROR: No AppImage artifact found in $ELECTRON_DIR/release"
     echo "Contents of release directory:"
     ls -la "$ELECTRON_DIR/release/"
     exit 1
 fi
 
-# Rename to our standard naming convention: Craft-Agents-x64.AppImage, Craft-Agents-arm64.AppImage
-APPIMAGE_NAME="Craft-Agents-${ARCH}.AppImage"
-APPIMAGE_PATH="$ELECTRON_DIR/release/$APPIMAGE_NAME"
-mv "$BUILT_APPIMAGE_PATH" "$APPIMAGE_PATH"
-echo "Renamed $BUILT_APPIMAGE_NAME -> $APPIMAGE_NAME"
+APPIMAGE_NAME=$(basename "$APPIMAGE_PATH")
 
 echo ""
 echo "=== Build Complete ==="
-echo "AppImage: $ELECTRON_DIR/release/${APPIMAGE_NAME}"
-echo "Size: $(du -h "$ELECTRON_DIR/release/${APPIMAGE_NAME}" | cut -f1)"
+echo "AppImage: $APPIMAGE_PATH"
+echo "Size: $(du -h "$APPIMAGE_PATH" | cut -f1)"
 
 # 9. Create manifest.json for upload script
 # Read version from package.json

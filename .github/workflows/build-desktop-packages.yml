@@ -1,4 +1,4 @@
-name: Build Desktop Packages
+name: Build Desktop Candidate Packages
 
 on:
   workflow_dispatch:
@@ -29,6 +29,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Set candidate version
+        shell: bash
+        run: |
+          VERSION=$(bun run scripts/set-electron-version.ts candidate)
+          echo "CANDIDATE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building candidate version: $VERSION"
+
       - name: Build Windows x64 package
         working-directory: apps/electron
         run: bun run dist:win
@@ -39,7 +46,7 @@ jobs:
           name: desktop-windows-x64
           if-no-files-found: error
           path: |
-            apps/electron/release/*.exe
+            apps/electron/release/*-${{ env.CANDIDATE_VERSION }}-x64.exe
             apps/electron/release/*.yml
             apps/electron/release/*.blockmap
 
@@ -64,6 +71,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Set candidate version
+        shell: bash
+        run: |
+          VERSION=$(bun run scripts/set-electron-version.ts candidate)
+          echo "CANDIDATE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building candidate version: $VERSION"
+
       - name: Build Linux x64 package
         working-directory: apps/electron
         run: bash scripts/build-linux.sh x64
@@ -74,7 +88,7 @@ jobs:
           name: desktop-linux-x64
           if-no-files-found: error
           path: |
-            apps/electron/release/*.AppImage
+            apps/electron/release/*-${{ env.CANDIDATE_VERSION }}-x64.AppImage
             apps/electron/release/*.yml
             apps/electron/release/*.blockmap
 
@@ -99,35 +113,47 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Set candidate version
+        shell: bash
+        run: |
+          VERSION=$(bun run scripts/set-electron-version.ts candidate)
+          echo "CANDIDATE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building candidate version: $VERSION"
+
       - name: Build macOS arm64 package
         working-directory: apps/electron
         shell: bash
         run: bash scripts/build-dmg.sh arm64 --no-sign
+
+      - name: Build macOS x64 package
+        working-directory: apps/electron
+        shell: bash
+        run: bash scripts/build-dmg.sh x64 --no-sign
 
       - name: Upload macOS arm64 dmg
         uses: actions/upload-artifact@v4
         with:
           name: desktop-macos-arm64-dmg
           if-no-files-found: error
-          path: apps/electron/release/**/Crystal-Agents-arm64.dmg
+          path: apps/electron/release/**/Crystal-Agents-${{ env.CANDIDATE_VERSION }}-arm64.dmg
 
       - name: Upload macOS arm64 zip
         uses: actions/upload-artifact@v4
         with:
           name: desktop-macos-arm64-zip
           if-no-files-found: error
-          path: apps/electron/release/**/Crystal-Agents-arm64.zip
+          path: apps/electron/release/**/Crystal-Agents-${{ env.CANDIDATE_VERSION }}-arm64.zip
 
       - name: Upload macOS x64 dmg
         uses: actions/upload-artifact@v4
         with:
           name: desktop-macos-x64-dmg
           if-no-files-found: error
-          path: apps/electron/release/**/Crystal-Agents-x64.dmg
+          path: apps/electron/release/**/Crystal-Agents-${{ env.CANDIDATE_VERSION }}-x64.dmg
 
       - name: Upload macOS x64 zip
         uses: actions/upload-artifact@v4
         with:
           name: desktop-macos-x64-zip
           if-no-files-found: error
-          path: apps/electron/release/**/Crystal-Agents-x64.zip
+          path: apps/electron/release/**/Crystal-Agents-${{ env.CANDIDATE_VERSION }}-x64.zip
