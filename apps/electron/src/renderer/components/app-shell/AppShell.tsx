@@ -31,6 +31,12 @@ import {
   Radio,
   Bot,
   Info,
+  ChevronUp,
+  Loader2,
+  CircleCheckBig,
+  CircleDashed,
+  CircleX,
+  AlertCircle,
 } from "lucide-react"
 // SessionStatusIcons no longer used - icons come from dynamic sessionStatuses
 import { SourceAvatar } from "@/components/ui/source-avatar"
@@ -166,6 +172,80 @@ interface AppShellProps {
 type FilterMode = 'include' | 'exclude'
 
 const altClickTooltipLabel = isMac ? '⌥ click to exclude' : 'Alt click to exclude'
+
+type WorkspaceImportCategory = 'sources' | 'sessions' | 'skills' | 'labels' | 'statuses' | 'permissions' | 'views' | 'automations' | 'automations-history' | 'automations-retry-queue' | 'events'
+type WorkspaceImportResultCategory = WorkspaceImportCategory | 'unknown'
+
+type WorkspaceImportPreviewGroup = {
+  id: WorkspaceImportCategory
+  name: string
+  sourcePath: string
+  targetPath: string
+  kind: 'dir' | 'file'
+  targetExists: boolean
+  totalCount: number
+  importableCount: number
+  skippedCount: number
+  items: Array<{
+    id: string
+    name: string
+    sourcePath: string
+    targetPath: string
+    targetExists: boolean
+    kind: 'dir' | 'file'
+  }>
+}
+
+type WorkspaceImportStatusPayload = {
+  sourcePath: string
+  workspaceDataDir: string
+  sourceExists: boolean
+  sourceIsDirectory: boolean
+  hasImportableData: boolean
+  availableEntries: Array<{
+    name: string
+    sourcePath: string
+    targetPath: string
+    kind: 'dir' | 'file'
+    targetExists: boolean
+  }>
+  missingEntries: string[]
+  previewGroups: WorkspaceImportPreviewGroup[]
+  message?: string
+}
+
+type WorkspaceImportResultPayload = {
+  sourcePath: string
+  workspaceDataDir: string
+  imported: string[]
+  skipped: string[]
+  warnings: string[]
+  results: Array<{
+    category: WorkspaceImportResultCategory
+    name: string
+    status: 'imported' | 'skipped' | 'missing' | 'failed'
+    detail: string
+  }>
+  previewGroups: WorkspaceImportPreviewGroup[]
+  hasImportableData: boolean
+}
+
+type WorkspaceLegacyStatusPayload = {
+  hasLegacyData: boolean
+  officialDataDir: string
+  workspaceDataDir: string
+  detectedEntries: Array<{
+    name: string
+    sourcePath: string
+    targetPath: string
+    kind: 'official-dir' | 'official-file' | 'legacy-dir' | 'legacy-file'
+    targetExists: boolean
+  }>
+  previewGroups: WorkspaceImportPreviewGroup[]
+}
+
+type WorkspaceImportDialogMode = 'manual' | 'auto' | 'legacy'
+type WorkspaceImportDialogPhase = 'preview' | 'result'
 
 /** Wraps children in a Tooltip that shows instantly on hover — only rendered when `show` is true. */
 function AltExcludeTooltip({ show, children }: { show: boolean; children: React.ReactNode }) {
@@ -854,6 +934,12 @@ function AppShellContent({
   const [filterDropdownQuery, setFilterDropdownQuery] = React.useState('')
   const [filterAltHeld, setFilterAltHeld] = React.useState(false)
   const [isImportingWorkspaceRecords, setIsImportingWorkspaceRecords] = React.useState(false)
+  const [workspaceImportDialogOpen, setWorkspaceImportDialogOpen] = React.useState(false)
+  const [workspaceImportDialogMode, setWorkspaceImportDialogMode] = React.useState<WorkspaceImportDialogMode>('manual')
+  const [workspaceImportDialogPhase, setWorkspaceImportDialogPhase] = React.useState<WorkspaceImportDialogPhase>('preview')
+  const [workspaceImportStatus, setWorkspaceImportStatus] = React.useState<WorkspaceImportStatusPayload | null>(null)
+  const [workspaceImportResult, setWorkspaceImportResult] = React.useState<WorkspaceImportResultPayload | null>(null)
+  const [expandedWorkspaceImportGroups, setExpandedWorkspaceImportGroups] = React.useState<Record<string, boolean>>({})
 
   // Reset search only when navigator or filter changes (not when selecting sessions)
   const navFilterKey = React.useMemo(() => {
@@ -921,10 +1007,32 @@ function AppShellContent({
     return `${normalized}/.craft-agent`
   }, [activeWorkspace?.rootPath])
 
-  const runWorkspaceRecordImport = React.useCallback(async (sourcePath: string) => {
+  const resetWorkspaceImportDialog = React.useCallback(() => {
+    setWorkspaceImportDialogPhase('preview')
+    setWorkspaceImportStatus(null)
+    setWorkspaceImportResult(null)
+    setExpandedWorkspaceImportGroups({})
+  }, [])
+
+  const openWorkspaceImportPreview = React.useCallback((
+    mode: WorkspaceImportDialogMode,
+    status: WorkspaceImportStatusPayload,
+  ) => {
+    setWorkspaceImportDialogMode(mode)
+    setWorkspaceImportStatus(status)
+    setWorkspaceImportResult(null)
+    setWorkspaceImportDialogPhase('preview')
+    setExpandedWorkspaceImportGroups(Object.fromEntries(status.previewGroups.map((group) => [group.id, false])))
+    setWorkspaceImportDialogOpen(true)
+  }, [])
+
+  const loadWorkspaceImportPreview = React.useCallback(async (
+    mode: WorkspaceImportDialogMode,
+    sourcePath: string,
+  ) => {
     if (!window.electronAPI || !activeWorkspaceId) return
 
-    const status = await window.electronAPI.getWorkspaceRecordImportStatus(activeWorkspaceId, sourcePath)
+    const status = await window.electronAPI.getWorkspaceRecordImportStatus(activeWorkspaceId, sourcePath) as WorkspaceImportStatusPayload
     if (!status.sourceExists) {
       toast.error(t('session.workspaceRecordImportInvalidSource'), {
         description: t('session.workspaceRecordImportInvalidSourceDesc', { path: status.sourcePath || sourcePath }),
@@ -939,31 +1047,41 @@ function AppShellContent({
       return
     }
 
-    if (!status.hasImportableData) {
+    if (!status.hasImportableData || status.previewGroups.length === 0) {
       toast.error(t('session.workspaceRecordImportNoData'), {
         description: t('session.workspaceRecordImportNoDataDesc', { path: status.sourcePath }),
       })
       return
     }
 
-    const importNames = status.availableEntries.map((entry) => entry.name).join('、')
-    const skippedNames = status.availableEntries.filter((entry) => entry.targetExists).map((entry) => entry.name).join('、')
-    const confirmLines = [
-      t('session.workspaceRecordImportConfirm'),
-      '',
-      t('session.workspaceRecordImportSourceLine', { path: status.sourcePath }),
-      t('session.workspaceRecordImportImportEntriesLine', { entries: importNames }),
-    ]
-    if (skippedNames) {
-      confirmLines.push(t('session.workspaceRecordImportSkipEntriesLine', { entries: skippedNames }))
-    }
+    openWorkspaceImportPreview(mode, status)
+  }, [activeWorkspaceId, openWorkspaceImportPreview, t])
 
-    const confirmed = window.confirm(confirmLines.join('\n'))
-    if (!confirmed) return
+  const executeWorkspaceImport = React.useCallback(async () => {
+    if (!window.electronAPI || !activeWorkspaceId || !workspaceImportStatus) return
 
     setIsImportingWorkspaceRecords(true)
     try {
-      const result = await window.electronAPI.importWorkspaceRecordData(activeWorkspaceId, status.sourcePath)
+      let result: WorkspaceImportResultPayload
+      if (workspaceImportDialogMode === 'legacy') {
+        const legacyResult = await window.electronAPI.migrateWorkspaceLegacyData(activeWorkspaceId)
+        result = {
+          sourcePath: workspaceImportStatus.sourcePath,
+          workspaceDataDir: workspaceImportStatus.workspaceDataDir,
+          imported: [],
+          skipped: [],
+          warnings: legacyResult.warnings ?? [],
+          results: (legacyResult.results ?? []) as WorkspaceImportResultPayload['results'],
+          previewGroups: legacyResult.previewGroups ?? workspaceImportStatus.previewGroups,
+          hasImportableData: legacyResult.hasLegacyData,
+        }
+      } else {
+        result = await window.electronAPI.importWorkspaceRecordData(activeWorkspaceId, workspaceImportStatus.sourcePath) as WorkspaceImportResultPayload
+      }
+
+      setWorkspaceImportResult(result)
+      setWorkspaceImportDialogPhase('result')
+
       const importedCount = result.results.filter((item) => item.status === 'imported').length
       const skippedCount = result.results.filter((item) => item.status === 'skipped').length
       const failedCount = result.results.filter((item) => item.status === 'failed').length
@@ -985,61 +1103,41 @@ function AppShellContent({
     } finally {
       setIsImportingWorkspaceRecords(false)
     }
-  }, [activeWorkspaceId, onRefreshSessions, onRefreshWorkspaces, t])
+  }, [activeWorkspaceId, onRefreshSessions, onRefreshWorkspaces, t, workspaceImportDialogMode, workspaceImportStatus])
 
   const handleWorkspaceRecordImportAuto = React.useCallback(async () => {
     if (!window.electronAPI || !activeWorkspaceId) return
 
     const defaultImportPath = buildDefaultWorkspaceImportPath()
     try {
-      const legacyStatus = await window.electronAPI.getWorkspaceLegacyStatus(activeWorkspaceId)
-      if (legacyStatus.hasLegacyData) {
-        const names = legacyStatus.detectedEntries.map((entry) => entry.name).join('、')
-        const confirmed = window.confirm([
-          t('session.importWorkspaceLegacyConfirm'),
-          '',
-          t('session.workspaceRecordImportImportEntriesLine', { entries: names }),
-        ].join('\n'))
-        if (!confirmed) return
-
-        setIsImportingWorkspaceRecords(true)
-        try {
-          const result = await window.electronAPI.migrateWorkspaceLegacyData(activeWorkspaceId)
-          const importedCount = result.imported ?? result.results?.filter((item) => item.status === 'imported').length ?? 0
-          const skippedCount = result.skipped ?? result.results?.filter((item) => item.status === 'skipped').length ?? 0
-          const failedCount = result.failed ?? result.results?.filter((item) => item.status === 'failed').length ?? 0
-
-          toast.success(t('session.workspaceRecordImportDone'), {
-            description: t('session.workspaceRecordImportDoneDesc', {
-              imported: importedCount,
-              skipped: skippedCount,
-              failed: failedCount,
-            }),
-          })
-
-          onRefreshWorkspaces?.()
-          await onRefreshSessions?.()
-        } finally {
-          setIsImportingWorkspaceRecords(false)
-        }
-        return
-      }
-
-      const defaultStatus = await window.electronAPI.getWorkspaceRecordImportStatus(activeWorkspaceId, defaultImportPath)
-      if (!defaultStatus.hasImportableData) {
-        toast.error(t('session.workspaceRecordImportNoData'), {
-          description: t('session.workspaceRecordImportNoDataDesc', { path: defaultImportPath }),
+      const legacyStatus = await window.electronAPI.getWorkspaceLegacyStatus(activeWorkspaceId) as WorkspaceLegacyStatusPayload
+      if (legacyStatus.hasLegacyData && legacyStatus.previewGroups.length > 0) {
+        openWorkspaceImportPreview('legacy', {
+          sourcePath: legacyStatus.officialDataDir,
+          workspaceDataDir: legacyStatus.workspaceDataDir,
+          sourceExists: true,
+          sourceIsDirectory: true,
+          hasImportableData: true,
+          availableEntries: legacyStatus.detectedEntries.map((entry) => ({
+            name: entry.name,
+            sourcePath: entry.sourcePath,
+            targetPath: entry.targetPath,
+            kind: entry.kind.endsWith('dir') ? 'dir' : 'file',
+            targetExists: entry.targetExists,
+          })),
+          missingEntries: [],
+          previewGroups: legacyStatus.previewGroups,
         })
         return
       }
 
-      await runWorkspaceRecordImport(defaultStatus.sourcePath)
+      await loadWorkspaceImportPreview('auto', defaultImportPath)
     } catch (error) {
       toast.error(t('session.workspaceRecordImportFailed'), {
         description: error instanceof Error ? error.message : String(error),
       })
     }
-  }, [activeWorkspaceId, buildDefaultWorkspaceImportPath, onRefreshSessions, onRefreshWorkspaces, runWorkspaceRecordImport, t])
+  }, [activeWorkspaceId, buildDefaultWorkspaceImportPath, loadWorkspaceImportPreview, openWorkspaceImportPreview, t])
 
   const handleWorkspaceRecordImportManual = React.useCallback(async () => {
     if (!window.electronAPI || !activeWorkspaceId) return
@@ -1051,13 +1149,13 @@ function AppShellContent({
         title: t('session.workspaceRecordImportSelectTitle'),
       })
       if (!selectedPath) return
-      await runWorkspaceRecordImport(selectedPath)
+      await loadWorkspaceImportPreview('manual', selectedPath)
     } catch (error) {
       toast.error(t('session.workspaceRecordImportFailed'), {
         description: error instanceof Error ? error.message : String(error),
       })
     }
-  }, [activeWorkspaceId, buildDefaultWorkspaceImportPath, runWorkspaceRecordImport, t])
+  }, [activeWorkspaceId, buildDefaultWorkspaceImportPath, loadWorkspaceImportPreview, t])
 
   // Send to Workspace dialog state (driven by sendToWorkspaceAtom set from SessionMenu/BatchSessionMenu)
   const sendToWorkspaceIds = useAtomValue(sendToWorkspaceAtom)
@@ -3889,6 +3987,135 @@ function AppShellContent({
           <DialogFooter>
             <Button variant="outline" onClick={() => setAutomationPendingDelete(null)}>Cancel</Button>
             <Button variant="destructive" onClick={confirmDeleteAutomation}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={workspaceImportDialogOpen} onOpenChange={(open) => {
+        if (!isImportingWorkspaceRecords) {
+          setWorkspaceImportDialogOpen(open)
+          if (!open) resetWorkspaceImportDialog()
+        }
+      }}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <DatabaseZap className="h-4 w-4" />
+              {workspaceImportDialogPhase === 'preview'
+                ? t('session.workspaceRecordImportPreviewTitle')
+                : t('session.workspaceRecordImportResultsTitle')}
+            </DialogTitle>
+            <DialogDescription>
+              {workspaceImportDialogPhase === 'preview'
+                ? (workspaceImportDialogMode === 'legacy'
+                  ? t('session.workspaceRecordImportLegacyPreviewDesc')
+                  : t('session.workspaceRecordImportPreviewDesc'))
+                : t('session.workspaceRecordImportResultsDesc')}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            {workspaceImportStatus && (
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm space-y-1">
+                <div className="font-medium text-foreground">{t('session.workspaceRecordImportSourceLine', { path: workspaceImportStatus.sourcePath })}</div>
+                <div className="text-muted-foreground">{t('session.workspaceRecordImportTargetLine', { path: workspaceImportStatus.workspaceDataDir })}</div>
+              </div>
+            )}
+
+            {(workspaceImportDialogPhase === 'preview' ? workspaceImportStatus?.previewGroups : workspaceImportResult?.previewGroups)?.map((group) => {
+              const isOpen = !!expandedWorkspaceImportGroups[group.id]
+              const resultItems = workspaceImportResult?.results.filter((item) => item.category === group.id) ?? []
+              return (
+                <div key={group.id} className="rounded-lg border border-border/60 overflow-hidden">
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-muted/20 transition-colors"
+                    onClick={() => setExpandedWorkspaceImportGroups((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
+                  >
+                    {isOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-sm">{group.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {t('session.workspaceRecordImportGroupCounts', {
+                          total: group.totalCount,
+                          importable: group.importableCount,
+                          skipped: group.skippedCount,
+                        })}
+                      </div>
+                    </div>
+                  </button>
+                  <AnimatedCollapsibleContent isOpen={isOpen} className="overflow-hidden">
+                    <div className="border-t border-border/60 px-3 py-2 space-y-2 bg-muted/10">
+                      {(workspaceImportDialogPhase === 'preview' ? group.items : resultItems).length === 0 ? (
+                        <div className="text-sm text-muted-foreground">{t('session.workspaceRecordImportEmptyGroup')}</div>
+                      ) : workspaceImportDialogPhase === 'preview' ? (
+                        group.items.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between gap-3 text-sm">
+                            <span className="truncate">{item.name}</span>
+                            <span className={cn('text-xs', item.targetExists ? 'text-warning' : 'text-success')}>
+                              {item.targetExists ? t('session.workspaceRecordImportStatusSkipped') : t('session.workspaceRecordImportStatusReady')}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        resultItems.map((item, index) => (
+                          <div key={`${item.category}:${item.name}:${index}`} className="flex items-start justify-between gap-3 text-sm">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate">{item.name}</div>
+                              <div className="text-xs text-muted-foreground break-words">{item.detail}</div>
+                            </div>
+                            <div className="shrink-0 flex items-center gap-1 text-xs">
+                              {item.status === 'imported' && <CircleCheckBig className="h-3.5 w-3.5 text-success" />}
+                              {item.status === 'skipped' && <CircleDashed className="h-3.5 w-3.5 text-warning" />}
+                              {item.status === 'failed' && <CircleX className="h-3.5 w-3.5 text-destructive" />}
+                              {item.status === 'missing' && <AlertCircle className="h-3.5 w-3.5 text-muted-foreground" />}
+                              <span className={cn(
+                                item.status === 'imported' && 'text-success',
+                                item.status === 'skipped' && 'text-warning',
+                                item.status === 'failed' && 'text-destructive',
+                                item.status === 'missing' && 'text-muted-foreground',
+                              )}>
+                                {item.status === 'imported' && t('session.workspaceRecordImportStatusImported')}
+                                {item.status === 'skipped' && t('session.workspaceRecordImportStatusSkipped')}
+                                {item.status === 'failed' && t('session.workspaceRecordImportStatusFailed')}
+                                {item.status === 'missing' && t('session.workspaceRecordImportStatusMissing')}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </AnimatedCollapsibleContent>
+                </div>
+              )
+            })}
+
+            {workspaceImportDialogPhase === 'result' && workspaceImportResult?.warnings?.length ? (
+              <div className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 space-y-1">
+                <div className="text-sm font-medium">{t('session.workspaceRecordImportWarningsTitle')}</div>
+                {workspaceImportResult.warnings.map((warning, index) => (
+                  <div key={index} className="text-xs text-muted-foreground break-words">{warning}</div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            {workspaceImportDialogPhase === 'preview' ? (
+              <>
+                <Button variant="outline" onClick={() => { setWorkspaceImportDialogOpen(false); resetWorkspaceImportDialog() }} disabled={isImportingWorkspaceRecords}>
+                  {t('common.cancel')}
+                </Button>
+                <Button onClick={() => void executeWorkspaceImport()} disabled={isImportingWorkspaceRecords || !workspaceImportStatus}>
+                  {isImportingWorkspaceRecords ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {t('session.workspaceRecordImportConfirmButton')}
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" onClick={() => { setWorkspaceImportDialogOpen(false); resetWorkspaceImportDialog() }}>
+                {t('common.close')}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

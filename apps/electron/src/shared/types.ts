@@ -458,6 +458,25 @@ export interface ElectronAPI {
       kind: 'official-dir' | 'official-file' | 'legacy-dir' | 'legacy-file'
       targetExists: boolean
     }>
+    previewGroups: Array<{
+      id: 'sources' | 'sessions' | 'skills' | 'labels' | 'statuses' | 'permissions' | 'views' | 'automations' | 'automations-history' | 'automations-retry-queue' | 'events'
+      name: string
+      sourcePath: string
+      targetPath: string
+      kind: 'dir' | 'file'
+      targetExists: boolean
+      totalCount: number
+      importableCount: number
+      skippedCount: number
+      items: Array<{
+        id: string
+        name: string
+        sourcePath: string
+        targetPath: string
+        targetExists: boolean
+        kind: 'dir' | 'file'
+      }>
+    }>
   }>
   migrateWorkspaceLegacyData(workspaceId: string): Promise<{
     hasLegacyData: boolean
@@ -467,9 +486,29 @@ export interface ElectronAPI {
     skipped?: number
     failed?: number
     results?: Array<{
+      category: 'sources' | 'sessions' | 'skills' | 'labels' | 'statuses' | 'permissions' | 'views' | 'automations' | 'automations-history' | 'automations-retry-queue' | 'events' | 'unknown'
       name: string
       status: 'imported' | 'skipped' | 'missing' | 'failed'
       detail: string
+    }>
+    previewGroups?: Array<{
+      id: 'sources' | 'sessions' | 'skills' | 'labels' | 'statuses' | 'permissions' | 'views' | 'automations' | 'automations-history' | 'automations-retry-queue' | 'events'
+      name: string
+      sourcePath: string
+      targetPath: string
+      kind: 'dir' | 'file'
+      targetExists: boolean
+      totalCount: number
+      importableCount: number
+      skippedCount: number
+      items: Array<{
+        id: string
+        name: string
+        sourcePath: string
+        targetPath: string
+        targetExists: boolean
+        kind: 'dir' | 'file'
+      }>
     }>
     warnings?: string[]
   }>
@@ -487,6 +526,25 @@ export interface ElectronAPI {
       targetExists: boolean
     }>
     missingEntries: string[]
+    previewGroups: Array<{
+      id: 'sources' | 'sessions' | 'skills' | 'labels' | 'statuses' | 'permissions' | 'views' | 'automations' | 'automations-history' | 'automations-retry-queue' | 'events'
+      name: string
+      sourcePath: string
+      targetPath: string
+      kind: 'dir' | 'file'
+      targetExists: boolean
+      totalCount: number
+      importableCount: number
+      skippedCount: number
+      items: Array<{
+        id: string
+        name: string
+        sourcePath: string
+        targetPath: string
+        targetExists: boolean
+        kind: 'dir' | 'file'
+      }>
+    }>
     message?: string
   }>
   importWorkspaceRecordData(workspaceId: string, sourcePath: string): Promise<{
@@ -496,9 +554,29 @@ export interface ElectronAPI {
     skipped: string[]
     warnings: string[]
     results: Array<{
+      category: 'sources' | 'sessions' | 'skills' | 'labels' | 'statuses' | 'permissions' | 'views' | 'automations' | 'automations-history' | 'automations-retry-queue' | 'events' | 'unknown'
       name: string
       status: 'imported' | 'skipped' | 'missing' | 'failed'
       detail: string
+    }>
+    previewGroups: Array<{
+      id: 'sources' | 'sessions' | 'skills' | 'labels' | 'statuses' | 'permissions' | 'views' | 'automations' | 'automations-history' | 'automations-retry-queue' | 'events'
+      name: string
+      sourcePath: string
+      targetPath: string
+      kind: 'dir' | 'file'
+      targetExists: boolean
+      totalCount: number
+      importableCount: number
+      skippedCount: number
+      items: Array<{
+        id: string
+        name: string
+        sourcePath: string
+        targetPath: string
+        targetExists: boolean
+        kind: 'dir' | 'file'
+      }>
     }>
     hasImportableData: boolean
   }>

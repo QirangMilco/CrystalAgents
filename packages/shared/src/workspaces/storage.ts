@@ -16,6 +16,7 @@ import {
   statSync,
   renameSync,
   cpSync,
+  appendFileSync,
 } from 'fs';
 import { dirname, join } from 'path';
 import { randomUUID } from 'crypto';
@@ -588,6 +589,42 @@ export interface LegacyWorkspaceDetectionResult {
     kind: 'official-dir' | 'official-file' | 'legacy-dir' | 'legacy-file';
     targetExists: boolean;
   }>;
+  previewGroups: WorkspaceRecordImportPreviewGroup[];
+}
+
+export type WorkspaceRecordImportCategory =
+  | 'sources'
+  | 'sessions'
+  | 'skills'
+  | 'labels'
+  | 'statuses'
+  | 'permissions'
+  | 'views'
+  | 'automations'
+  | 'automations-history'
+  | 'automations-retry-queue'
+  | 'events';
+
+export interface WorkspaceRecordImportPreviewItem {
+  id: string;
+  name: string;
+  sourcePath: string;
+  targetPath: string;
+  targetExists: boolean;
+  kind: 'dir' | 'file';
+}
+
+export interface WorkspaceRecordImportPreviewGroup {
+  id: WorkspaceRecordImportCategory;
+  name: string;
+  sourcePath: string;
+  targetPath: string;
+  kind: 'dir' | 'file';
+  targetExists: boolean;
+  totalCount: number;
+  importableCount: number;
+  skippedCount: number;
+  items: WorkspaceRecordImportPreviewItem[];
 }
 
 export interface WorkspaceRecordImportStatus {
@@ -604,6 +641,7 @@ export interface WorkspaceRecordImportStatus {
     targetExists: boolean;
   }>;
   missingEntries: string[];
+  previewGroups: WorkspaceRecordImportPreviewGroup[];
   message?: string;
 }
 
@@ -614,11 +652,356 @@ export interface WorkspaceRecordImportResult {
   skipped: string[];
   warnings: string[];
   results: Array<{
+    category: WorkspaceRecordImportCategory | 'unknown';
     name: string;
     status: 'imported' | 'skipped' | 'missing' | 'failed';
     detail: string;
   }>;
+  previewGroups: WorkspaceRecordImportPreviewGroup[];
   hasImportableData: boolean;
+}
+
+const IMPORT_GROUP_META: Record<WorkspaceRecordImportCategory, { name: string; kind: 'dir' | 'file' }> = {
+  sources: { name: 'Sources', kind: 'dir' },
+  sessions: { name: 'Sessions', kind: 'dir' },
+  skills: { name: 'Skills', kind: 'dir' },
+  labels: { name: 'Labels', kind: 'dir' },
+  statuses: { name: 'Statuses', kind: 'dir' },
+  permissions: { name: 'Permissions', kind: 'file' },
+  views: { name: 'Views', kind: 'file' },
+  automations: { name: 'Automations', kind: 'file' },
+  'automations-history': { name: 'Automation history', kind: 'file' },
+  'automations-retry-queue': { name: 'Automation retry queue', kind: 'file' },
+  events: { name: 'Events', kind: 'file' },
+};
+
+function getCategoryForEntryName(name: string): WorkspaceRecordImportCategory {
+  switch (name) {
+    case 'sources': return 'sources';
+    case 'sessions': return 'sessions';
+    case 'skills': return 'skills';
+    case 'labels': return 'labels';
+    case 'statuses': return 'statuses';
+    case 'permissions.json': return 'permissions';
+    case 'views.json': return 'views';
+    case 'automations.json': return 'automations';
+    case 'automations-history.jsonl': return 'automations-history';
+    case 'automations-retry-queue.jsonl': return 'automations-retry-queue';
+    case 'events.jsonl':
+    default:
+      return 'events';
+  }
+}
+
+function safeReadJson(filePath: string): unknown | null {
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function countJsonlRecords(filePath: string): number {
+  try {
+    return readFileSync(filePath, 'utf-8').split('\n').filter(line => line.trim().length > 0).length;
+  } catch {
+    return 0;
+  }
+}
+
+function isMergeableJsonlCategory(category: WorkspaceRecordImportCategory): boolean {
+  return category === 'events'
+    || category === 'automations-history'
+    || category === 'automations-retry-queue';
+}
+
+function mergeJsonlFile(sourcePath: string, targetPath: string): { appendedLines: number; duplicateLines: number; changed: boolean } {
+  const sourceText = readFileSync(sourcePath, 'utf-8');
+  const sourceLines = sourceText.split('\n').filter(line => line.trim().length > 0);
+  if (sourceLines.length === 0) {
+    return { appendedLines: 0, duplicateLines: 0, changed: false };
+  }
+
+  mkdirSync(dirname(targetPath), { recursive: true });
+  if (!existsSync(targetPath)) {
+    writeFileSync(targetPath, `${sourceLines.join('\n')}\n`);
+    return { appendedLines: sourceLines.length, duplicateLines: 0, changed: true };
+  }
+
+  const targetText = readFileSync(targetPath, 'utf-8');
+  const existingLines = targetText.split('\n').filter(line => line.trim().length > 0);
+  const seen = new Set(existingLines);
+  const linesToAppend: string[] = [];
+  let duplicateLines = 0;
+
+  for (const line of sourceLines) {
+    if (seen.has(line)) {
+      duplicateLines += 1;
+      continue;
+    }
+    seen.add(line);
+    linesToAppend.push(line);
+  }
+
+  if (linesToAppend.length === 0) {
+    return { appendedLines: 0, duplicateLines, changed: false };
+  }
+
+  const needsLeadingNewline = targetText.length > 0 && !targetText.endsWith('\n');
+  const payload = `${needsLeadingNewline ? '\n' : ''}${linesToAppend.join('\n')}\n`;
+  appendFileSync(targetPath, payload);
+  return { appendedLines: linesToAppend.length, duplicateLines, changed: true };
+}
+
+function buildSessionPreviewItems(sourcePath: string, targetPath: string): WorkspaceRecordImportPreviewItem[] {
+  if (!existsSync(sourcePath) || !statSync(sourcePath).isDirectory()) return [];
+
+  const items: WorkspaceRecordImportPreviewItem[] = [];
+  for (const entry of readdirSync(sourcePath, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const sessionDir = join(sourcePath, entry.name);
+    const sessionFile = join(sessionDir, 'session.jsonl');
+    if (!existsSync(sessionFile)) continue;
+    items.push({
+      id: entry.name,
+      name: entry.name,
+      sourcePath: sessionDir,
+      targetPath: join(targetPath, entry.name),
+      targetExists: existsSync(join(targetPath, entry.name)),
+      kind: 'dir',
+    });
+  }
+  return items;
+}
+
+function buildSlugDirPreviewItems(sourcePath: string, targetPath: string, requiredFile: string): WorkspaceRecordImportPreviewItem[] {
+  if (!existsSync(sourcePath) || !statSync(sourcePath).isDirectory()) return [];
+
+  const items: WorkspaceRecordImportPreviewItem[] = [];
+  for (const entry of readdirSync(sourcePath, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const itemDir = join(sourcePath, entry.name);
+    if (!existsSync(join(itemDir, requiredFile))) continue;
+    items.push({
+      id: entry.name,
+      name: entry.name,
+      sourcePath: itemDir,
+      targetPath: join(targetPath, entry.name),
+      targetExists: existsSync(join(targetPath, entry.name)),
+      kind: 'dir',
+    });
+  }
+  return items;
+}
+
+function buildSingleFilePreviewItem(sourcePath: string, targetPath: string, name: string): WorkspaceRecordImportPreviewItem[] {
+  if (!existsSync(sourcePath) || !statSync(sourcePath).isFile()) return [];
+  return [{
+    id: name,
+    name,
+    sourcePath,
+    targetPath,
+    targetExists: existsSync(targetPath),
+    kind: 'file',
+  }];
+}
+
+function buildNamedJsonItems(
+  sourcePath: string,
+  targetPath: string,
+  fileName: string,
+  names: string[],
+  targetExists: boolean,
+): WorkspaceRecordImportPreviewItem[] {
+  return names.map((name, index) => ({
+    id: `${fileName}:${index}`,
+    name,
+    sourcePath,
+    targetPath,
+    targetExists,
+    kind: 'file',
+  }));
+}
+
+function buildPreviewItemsForEntry(category: WorkspaceRecordImportCategory, sourcePath: string, targetPath: string): WorkspaceRecordImportPreviewItem[] {
+  switch (category) {
+    case 'sessions':
+      return buildSessionPreviewItems(sourcePath, targetPath);
+    case 'sources':
+      return buildSlugDirPreviewItems(sourcePath, targetPath, 'config.json');
+    case 'skills':
+      return buildSlugDirPreviewItems(sourcePath, targetPath, 'SKILL.md');
+    case 'labels': {
+      const filePath = join(sourcePath, 'config.json');
+      const raw = safeReadJson(filePath) as { labels?: Array<{ id?: string; name?: string }> } | null;
+      const names = raw?.labels?.map((label, index) => label.name || label.id || `label-${index + 1}`) ?? [];
+      return names.length > 0
+        ? buildNamedJsonItems(filePath, filePath.replace(sourcePath, targetPath), 'labels/config.json', names, existsSync(targetPath))
+        : buildSingleFilePreviewItem(filePath, join(targetPath, 'config.json'), 'labels/config.json');
+    }
+    case 'statuses': {
+      const filePath = join(sourcePath, 'config.json');
+      const raw = safeReadJson(filePath) as { statuses?: Array<{ id?: string; name?: string }> } | null;
+      const names = raw?.statuses?.map((status, index) => status.name || status.id || `status-${index + 1}`) ?? [];
+      return names.length > 0
+        ? buildNamedJsonItems(filePath, filePath.replace(sourcePath, targetPath), 'statuses/config.json', names, existsSync(targetPath))
+        : buildSingleFilePreviewItem(filePath, join(targetPath, 'config.json'), 'statuses/config.json');
+    }
+    case 'automations': {
+      const raw = safeReadJson(sourcePath) as { automations?: Record<string, Array<{ id?: string; name?: string }>> } | null;
+      const names = raw?.automations
+        ? Object.values(raw.automations).flatMap((items) => items.map((item, index) => item.name || item.id || `automation-${index + 1}`))
+        : [];
+      return names.length > 0
+        ? buildNamedJsonItems(sourcePath, targetPath, 'automations.json', names, existsSync(targetPath))
+        : buildSingleFilePreviewItem(sourcePath, targetPath, 'automations.json');
+    }
+    case 'views': {
+      const raw = safeReadJson(sourcePath) as { views?: Array<{ name?: string; id?: string }> } | Array<{ name?: string; id?: string }> | null;
+      const views = Array.isArray(raw) ? raw : raw?.views;
+      const names = views?.map((view, index) => view.name || view.id || `view-${index + 1}`) ?? [];
+      return names.length > 0
+        ? buildNamedJsonItems(sourcePath, targetPath, 'views.json', names, existsSync(targetPath))
+        : buildSingleFilePreviewItem(sourcePath, targetPath, 'views.json');
+    }
+    case 'permissions':
+      return buildSingleFilePreviewItem(sourcePath, targetPath, 'permissions.json');
+    case 'automations-history': {
+      const count = countJsonlRecords(sourcePath);
+      const names = count > 0 ? Array.from({ length: count }, (_, index) => `history-${index + 1}`) : [];
+      return names.length > 0
+        ? buildNamedJsonItems(sourcePath, targetPath, 'automations-history.jsonl', names, existsSync(targetPath))
+        : buildSingleFilePreviewItem(sourcePath, targetPath, 'automations-history.jsonl');
+    }
+    case 'automations-retry-queue': {
+      const count = countJsonlRecords(sourcePath);
+      const names = count > 0 ? Array.from({ length: count }, (_, index) => `retry-${index + 1}`) : [];
+      return names.length > 0
+        ? buildNamedJsonItems(sourcePath, targetPath, 'automations-retry-queue.jsonl', names, existsSync(targetPath))
+        : buildSingleFilePreviewItem(sourcePath, targetPath, 'automations-retry-queue.jsonl');
+    }
+    case 'events': {
+      const count = countJsonlRecords(sourcePath);
+      const names = count > 0 ? Array.from({ length: count }, (_, index) => `event-${index + 1}`) : [];
+      return names.length > 0
+        ? buildNamedJsonItems(sourcePath, targetPath, 'events.jsonl', names, existsSync(targetPath))
+        : buildSingleFilePreviewItem(sourcePath, targetPath, 'events.jsonl');
+    }
+  }
+}
+
+function createPreviewGroup(
+  category: WorkspaceRecordImportCategory,
+  sourcePath: string,
+  targetPath: string,
+  targetExists: boolean,
+): WorkspaceRecordImportPreviewGroup {
+  const meta = IMPORT_GROUP_META[category];
+  const items = buildPreviewItemsForEntry(category, sourcePath, targetPath);
+  const totalCount = items.length;
+  const skippedCount = items.filter(item => item.targetExists).length;
+  return {
+    id: category,
+    name: meta.name,
+    sourcePath,
+    targetPath,
+    kind: meta.kind,
+    targetExists,
+    totalCount,
+    importableCount: Math.max(0, totalCount - skippedCount),
+    skippedCount,
+    items,
+  };
+}
+
+function mergePreviewGroups(groups: WorkspaceRecordImportPreviewGroup[]): WorkspaceRecordImportPreviewGroup[] {
+  const merged = new Map<WorkspaceRecordImportCategory, WorkspaceRecordImportPreviewGroup>();
+
+  for (const group of groups) {
+    const existing = merged.get(group.id);
+    if (!existing) {
+      merged.set(group.id, { ...group, items: [...group.items] });
+      continue;
+    }
+
+    const seen = new Set(existing.items.map(item => item.targetPath));
+    for (const item of group.items) {
+      if (seen.has(item.targetPath)) continue;
+      existing.items.push(item);
+      seen.add(item.targetPath);
+    }
+    existing.totalCount = existing.items.length;
+    existing.skippedCount = existing.items.filter(item => item.targetExists).length;
+    existing.importableCount = Math.max(0, existing.totalCount - existing.skippedCount);
+    existing.targetExists = existing.items.length > 0 ? existing.items.every(item => item.targetExists) : existing.targetExists;
+  }
+
+  return Array.from(merged.values());
+}
+
+function detectWorkspaceRecordImportStatusFromCandidates(
+  rootPath: string,
+  sourcePath: string,
+  candidates: Array<{ basePath: string; kindPrefix?: 'official' | 'legacy' }>,
+): WorkspaceRecordImportStatus {
+  const workspaceDataDir = getWorkspaceDataPath(rootPath);
+  const availableEntries: WorkspaceRecordImportStatus['availableEntries'] = [];
+  const missingEntries = new Set<string>();
+  const previewGroups: WorkspaceRecordImportPreviewGroup[] = [];
+
+  for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
+    let found = false;
+    for (const candidate of candidates) {
+      const sourceEntry = join(candidate.basePath, dirName);
+      if (existsSync(sourceEntry) && statSync(sourceEntry).isDirectory()) {
+        const targetPath = join(workspaceDataDir, dirName);
+        availableEntries.push({
+          name: dirName,
+          sourcePath: sourceEntry,
+          targetPath,
+          kind: 'dir',
+          targetExists: existsSync(targetPath),
+        });
+        previewGroups.push(createPreviewGroup(getCategoryForEntryName(dirName), sourceEntry, targetPath, existsSync(targetPath)));
+        found = true;
+      }
+    }
+    if (!found) missingEntries.add(dirName);
+  }
+
+  for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
+    let found = false;
+    for (const candidate of candidates) {
+      const sourceEntry = join(candidate.basePath, fileName);
+      if (existsSync(sourceEntry) && statSync(sourceEntry).isFile()) {
+        const targetPath = join(workspaceDataDir, fileName);
+        availableEntries.push({
+          name: fileName,
+          sourcePath: sourceEntry,
+          targetPath,
+          kind: 'file',
+          targetExists: existsSync(targetPath),
+        });
+        previewGroups.push(createPreviewGroup(getCategoryForEntryName(fileName), sourceEntry, targetPath, existsSync(targetPath)));
+        found = true;
+        break;
+      }
+    }
+    if (!found) missingEntries.add(fileName);
+  }
+
+  const mergedPreviewGroups = mergePreviewGroups(previewGroups).filter(group => group.totalCount > 0);
+
+  return {
+    sourcePath,
+    workspaceDataDir,
+    sourceExists: true,
+    sourceIsDirectory: true,
+    hasImportableData: mergedPreviewGroups.some(group => group.totalCount > 0),
+    availableEntries,
+    missingEntries: Array.from(missingEntries),
+    previewGroups: mergedPreviewGroups,
+  };
 }
 
 function isOfficialManagedWorkspace(rootPath: string): boolean {
@@ -701,11 +1084,17 @@ export function detectLegacyWorkspaceData(rootPath: string): LegacyWorkspaceDete
     }
   }
 
+  const previewStatus = detectWorkspaceRecordImportStatusFromCandidates(rootPath, officialDataDir, [
+    { basePath: officialDataDir, kindPrefix: 'official' },
+    { basePath: rootPath, kindPrefix: 'legacy' },
+  ]);
+
   return {
     hasLegacyData: detectedEntries.length > 0,
     officialDataDir,
     workspaceDataDir: dataDir,
     detectedEntries,
+    previewGroups: previewStatus.previewGroups,
   };
 }
 
@@ -721,6 +1110,7 @@ export function detectWorkspaceRecordImportStatus(rootPath: string, sourcePath: 
       hasImportableData: false,
       availableEntries: [],
       missingEntries: [...LEGACY_WORKSPACE_DATA_DIRS, ...LEGACY_WORKSPACE_DATA_FILES],
+      previewGroups: [],
       message: 'Source path is empty.',
     };
   }
@@ -736,139 +1126,148 @@ export function detectWorkspaceRecordImportStatus(rootPath: string, sourcePath: 
       hasImportableData: false,
       availableEntries: [],
       missingEntries: [...LEGACY_WORKSPACE_DATA_DIRS, ...LEGACY_WORKSPACE_DATA_FILES],
+      previewGroups: [],
       message: !sourceExists ? 'Source path does not exist.' : 'Source path is not a directory.',
     };
   }
 
-  const availableEntries: WorkspaceRecordImportStatus['availableEntries'] = [];
-  const missingEntries: string[] = [];
-
-  for (const dirName of LEGACY_WORKSPACE_DATA_DIRS) {
-    const sourceEntry = join(sourcePath, dirName);
-    if (existsSync(sourceEntry) && statSync(sourceEntry).isDirectory()) {
-      const targetPath = join(workspaceDataDir, dirName);
-      availableEntries.push({
-        name: dirName,
-        sourcePath: sourceEntry,
-        targetPath,
-        kind: 'dir',
-        targetExists: existsSync(targetPath),
-      });
-    } else {
-      missingEntries.push(dirName);
-    }
-  }
-
-  for (const fileName of LEGACY_WORKSPACE_DATA_FILES) {
-    const sourceEntry = join(sourcePath, fileName);
-    if (existsSync(sourceEntry) && statSync(sourceEntry).isFile()) {
-      const targetPath = join(workspaceDataDir, fileName);
-      availableEntries.push({
-        name: fileName,
-        sourcePath: sourceEntry,
-        targetPath,
-        kind: 'file',
-        targetExists: existsSync(targetPath),
-      });
-    } else {
-      missingEntries.push(fileName);
-    }
-  }
-
-  return {
-    sourcePath,
-    workspaceDataDir,
-    sourceExists: true,
-    sourceIsDirectory: true,
-    hasImportableData: availableEntries.length > 0,
-    availableEntries,
-    missingEntries,
-  };
+  return detectWorkspaceRecordImportStatusFromCandidates(rootPath, sourcePath, [{ basePath: sourcePath }]);
 }
 
-export function importWorkspaceRecordDataFromSource(rootPath: string, sourcePath: string): WorkspaceRecordImportResult {
-  const status = detectWorkspaceRecordImportStatus(rootPath, sourcePath);
+function buildImportResultFromStatus(
+  status: WorkspaceRecordImportStatus,
+  abortDetail?: string,
+): WorkspaceRecordImportResult {
   const results: WorkspaceRecordImportResult['results'] = [];
   const imported: string[] = [];
   const skipped: string[] = [];
   const warnings: string[] = [];
 
   if (!status.sourceExists || !status.sourceIsDirectory || !status.hasImportableData) {
-    if (status.message) {
-      warnings.push(status.message);
-    }
+    if (status.message) warnings.push(status.message);
     for (const name of status.missingEntries) {
       results.push({
+        category: getCategoryForEntryName(name),
         name,
         status: 'missing',
         detail: 'Entry not found in selected source directory.',
       });
     }
     return {
-      sourcePath,
+      sourcePath: status.sourcePath,
       workspaceDataDir: status.workspaceDataDir,
       imported,
       skipped,
       warnings,
       results,
+      previewGroups: status.previewGroups,
       hasImportableData: false,
     };
   }
 
-  if (status.sourcePath === status.workspaceDataDir) {
-    const detail = 'Source directory is the current workspace data directory; import aborted.';
-    warnings.push(detail);
+  if (abortDetail) {
+    warnings.push(abortDetail);
     return {
-      sourcePath,
+      sourcePath: status.sourcePath,
       workspaceDataDir: status.workspaceDataDir,
       imported,
       skipped,
       warnings,
-      results: [
-        {
-          name: '.',
-          status: 'failed',
-          detail,
-        },
-      ],
+      results: [{ category: 'unknown', name: '.', status: 'failed', detail: abortDetail }],
+      previewGroups: status.previewGroups,
       hasImportableData: true,
     };
   }
 
   mkdirSync(status.workspaceDataDir, { recursive: true });
 
-  for (const entry of status.availableEntries) {
-    if (entry.targetExists) {
-      skipped.push(entry.name);
-      results.push({
-        name: entry.name,
-        status: 'skipped',
-        detail: 'Target entry already exists in current workspace data directory.',
-      });
-      continue;
-    }
+  for (const group of status.previewGroups) {
+    const isMergeableJsonlGroup = group.kind === 'file' && isMergeableJsonlCategory(group.id);
+    const mergedFilePaths = new Set<string>();
 
-    try {
-      cpSync(entry.sourcePath, entry.targetPath, { recursive: entry.kind === 'dir', force: false, errorOnExist: false });
-      imported.push(entry.name);
-      results.push({
-        name: entry.name,
-        status: 'imported',
-        detail: 'Imported into current workspace data directory.',
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      warnings.push(`${entry.name}: ${detail}`);
-      results.push({
-        name: entry.name,
-        status: 'failed',
-        detail,
-      });
+    for (const item of group.items) {
+      if (isMergeableJsonlGroup) {
+        if (mergedFilePaths.has(item.targetPath)) continue;
+        mergedFilePaths.add(item.targetPath);
+
+        try {
+          const mergeResult = mergeJsonlFile(item.sourcePath, item.targetPath);
+          if (!mergeResult.changed) {
+            skipped.push(`${group.id}:${item.name}`);
+            results.push({
+              category: group.id,
+              name: item.name,
+              status: 'skipped',
+              detail: mergeResult.duplicateLines > 0
+                ? `All ${mergeResult.duplicateLines} JSONL record(s) already exist in target file; nothing was merged.`
+                : 'Source JSONL file is empty; nothing was merged.',
+            });
+            continue;
+          }
+
+          imported.push(`${group.id}:${item.name}`);
+          results.push({
+            category: group.id,
+            name: item.name,
+            status: 'imported',
+            detail: item.targetExists
+              ? `Merged ${mergeResult.appendedLines} new JSONL record(s) into existing target file; skipped ${mergeResult.duplicateLines} duplicate record(s).`
+              : `Imported ${mergeResult.appendedLines} JSONL record(s) into new target file.`,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          warnings.push(`${item.name}: ${detail}`);
+          results.push({
+            category: group.id,
+            name: item.name,
+            status: 'failed',
+            detail,
+          });
+        }
+        continue;
+      }
+
+      if (item.targetExists) {
+        skipped.push(`${group.id}:${item.name}`);
+        results.push({
+          category: group.id,
+          name: item.name,
+          status: 'skipped',
+          detail: 'Target entry already exists in current workspace data directory.',
+        });
+        continue;
+      }
+
+      try {
+        if (item.kind === 'dir') {
+          cpSync(item.sourcePath, item.targetPath, { recursive: true, force: false, errorOnExist: false });
+        } else {
+          mkdirSync(dirname(item.targetPath), { recursive: true });
+          cpSync(item.sourcePath, item.targetPath, { recursive: false, force: false, errorOnExist: false });
+        }
+        imported.push(`${group.id}:${item.name}`);
+        results.push({
+          category: group.id,
+          name: item.name,
+          status: 'imported',
+          detail: 'Imported into current workspace data directory.',
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        warnings.push(`${item.name}: ${detail}`);
+        results.push({
+          category: group.id,
+          name: item.name,
+          status: 'failed',
+          detail,
+        });
+      }
     }
   }
 
   for (const missing of status.missingEntries) {
     results.push({
+      category: getCategoryForEntryName(missing),
       name: missing,
       status: 'missing',
       detail: 'Entry not found in selected source directory.',
@@ -876,77 +1275,43 @@ export function importWorkspaceRecordDataFromSource(rootPath: string, sourcePath
   }
 
   return {
-    sourcePath,
+    sourcePath: status.sourcePath,
     workspaceDataDir: status.workspaceDataDir,
     imported,
     skipped,
     warnings,
     results,
+    previewGroups: status.previewGroups,
     hasImportableData: true,
   };
 }
 
+export function importWorkspaceRecordDataFromSource(rootPath: string, sourcePath: string): WorkspaceRecordImportResult {
+  const status = detectWorkspaceRecordImportStatus(rootPath, sourcePath);
+
+  if (status.sourcePath === status.workspaceDataDir) {
+    return buildImportResultFromStatus(status, 'Source directory is the current workspace data directory; import aborted.');
+  }
+
+  return buildImportResultFromStatus(status);
+}
+
 export function importWorkspaceRecordDataFromWorkspaceRoot(rootPath: string): WorkspaceRecordImportResult {
   const detection = detectLegacyWorkspaceData(rootPath);
-  const results: WorkspaceRecordImportResult['results'] = [];
-  const imported: string[] = [];
-  const skipped: string[] = [];
-  const warnings: string[] = [];
+  const status = detectWorkspaceRecordImportStatusFromCandidates(rootPath, detection.officialDataDir, [
+    { basePath: detection.officialDataDir, kindPrefix: 'official' },
+    { basePath: rootPath, kindPrefix: 'legacy' },
+  ]);
 
   if (!detection.hasLegacyData) {
-    return {
-      sourcePath: detection.officialDataDir,
-      workspaceDataDir: detection.workspaceDataDir,
-      imported,
-      skipped,
-      warnings,
-      results,
+    return buildImportResultFromStatus({
+      ...status,
       hasImportableData: false,
-    };
+      previewGroups: [],
+    });
   }
 
-  mkdirSync(detection.workspaceDataDir, { recursive: true });
-
-  for (const entry of detection.detectedEntries) {
-    if (entry.targetExists) {
-      skipped.push(entry.name);
-      results.push({
-        name: entry.name,
-        status: 'skipped',
-        detail: 'Target entry already exists in current workspace data directory.',
-      });
-      continue;
-    }
-
-    const isDir = entry.kind === 'official-dir' || entry.kind === 'legacy-dir';
-    try {
-      cpSync(entry.sourcePath, entry.targetPath, { recursive: isDir, force: false, errorOnExist: false });
-      imported.push(entry.name);
-      results.push({
-        name: entry.name,
-        status: 'imported',
-        detail: 'Copied into current workspace data directory.',
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      warnings.push(`${entry.name}: ${detail}`);
-      results.push({
-        name: entry.name,
-        status: 'failed',
-        detail,
-      });
-    }
-  }
-
-  return {
-    sourcePath: detection.officialDataDir,
-    workspaceDataDir: detection.workspaceDataDir,
-    imported,
-    skipped,
-    warnings,
-    results,
-    hasImportableData: true,
-  };
+  return buildImportResultFromStatus(status);
 }
 
 function moveEntryWithBackup(
