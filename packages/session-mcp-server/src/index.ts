@@ -518,7 +518,7 @@ async function main() {
     }
   );
 
-  console.error(`[submit-plan-debug][session-mcp-server] startup env CRAFT_DEBUG_SUBMIT_PLAN=${process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? 'unset'} CRAFT_DEBUG_TOOL_TITLES=${process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset'}`);
+  console.error(`[submit-plan-debug][session-mcp-server] startup env CRAFT_DEBUG_SUBMIT_PLAN=${process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? 'unset'} CRAFT_DEBUG_TOOL_TITLES=${process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset'} CRAFT_DEBUG_TOOL_ARGS=${process.env.CRAFT_DEBUG_TOOL_ARGS ?? 'unset'}`);
 
   // Connect to upstream docs server (non-blocking, best-effort)
   await connectDocsUpstream();
@@ -535,6 +535,10 @@ async function main() {
     if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && name === 'SubmitPlan') {
       const args = (toolArgs ?? {}) as Record<string, unknown>;
       console.error(`[submit-plan-debug][session-mcp-server] call_tool name=${name} keys=${Object.keys(args).sort().join(',') || '∅'} hasDisplayName=${typeof args._displayName === 'string' ? 1 : 0} hasIntent=${typeof args._intent === 'string' ? 1 : 0} payload=${JSON.stringify(args)}`);
+    }
+    if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+      const args = (toolArgs ?? {}) as Record<string, unknown>;
+      console.error(`[tool-args-debug][session-mcp-server] call_tool name=${name} keys=${Object.keys(args).sort().join(',') || '∅'} payload=${JSON.stringify(args)}`);
     }
 
     try {

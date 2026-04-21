@@ -1074,6 +1074,12 @@ export class PiAgent extends BaseAgent {
     if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
       this.debug(`[tool-title-debug][main] pre_tool_use payload ${toolName} (${toolCallId ?? 'no-call-id'}, sessionId=${debugSessionId}) keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0}`);
     }
+    if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+      this.debug(`[tool-args-debug][main] pre_tool_use_request tool=${toolName} requestId=${requestId} toolCallId=${toolCallId ?? '∅'} sessionId=${debugSessionId} keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} payload=${JSON.stringify(input)}`);
+      if (toolName === 'Read' || toolName === 'Bash') {
+        this.debug(`[tool-args-debug][main] native_pre_tool_use_request tool=${toolName} requestId=${requestId} toolCallId=${toolCallId ?? '∅'} sessionId=${debugSessionId} path=${JSON.stringify((input as Record<string, unknown>).path ?? null)} file_path=${JSON.stringify((input as Record<string, unknown>).file_path ?? null)} command=${JSON.stringify((input as Record<string, unknown>).command ?? null)}`);
+      }
+    }
     if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (toolName === 'mcp__session__SubmitPlan' || toolName === 'SubmitPlan')) {
       this.debug(`[submit-plan-debug][main] pre_tool_use_request tool=${toolName} toolCallId=${toolCallId ?? 'no-call-id'} sessionId=${debugSessionId} keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0} payload=${JSON.stringify(input)}`);
     }
@@ -1147,12 +1153,24 @@ export class PiAgent extends BaseAgent {
         if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (toolName === 'mcp__session__SubmitPlan' || toolName === 'SubmitPlan')) {
           this.debug(`[submit-plan-debug][main] pre_tool_use_response tool=${toolName} requestId=${requestId} action=allow keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0} payload=${JSON.stringify(input)}`);
         }
+        if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+          this.debug(`[tool-args-debug][main] pre_tool_use_response tool=${toolName} requestId=${requestId} action=allow sessionId=${debugSessionId} keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} payload=${JSON.stringify(input)}`);
+          if (toolName === 'Read' || toolName === 'Bash') {
+            this.debug(`[tool-args-debug][main] native_pre_tool_use_response tool=${toolName} requestId=${requestId} action=allow sessionId=${debugSessionId} path=${JSON.stringify((input as Record<string, unknown>).path ?? null)} file_path=${JSON.stringify((input as Record<string, unknown>).file_path ?? null)} command=${JSON.stringify((input as Record<string, unknown>).command ?? null)}`);
+          }
+        }
         this.send({ type: 'pre_tool_use_response', requestId, action: 'allow' });
         return;
 
       case 'modify':
         if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (toolName === 'mcp__session__SubmitPlan' || toolName === 'SubmitPlan')) {
           this.debug(`[submit-plan-debug][main] pre_tool_use_response tool=${toolName} requestId=${requestId} action=modify keys=${Object.keys(checkResult.input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof checkResult.input._displayName === 'string' ? 1 : 0} hasIntent=${typeof checkResult.input._intent === 'string' ? 1 : 0} payload=${JSON.stringify(checkResult.input)}`);
+        }
+        if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+          this.debug(`[tool-args-debug][main] pre_tool_use_response tool=${toolName} requestId=${requestId} action=modify sessionId=${debugSessionId} keys=${Object.keys(checkResult.input ?? {}).sort().join(',') || '∅'} payload=${JSON.stringify(checkResult.input)}`);
+          if (toolName === 'Read' || toolName === 'Bash') {
+            this.debug(`[tool-args-debug][main] native_pre_tool_use_response tool=${toolName} requestId=${requestId} action=modify sessionId=${debugSessionId} path=${JSON.stringify((checkResult.input as Record<string, unknown>).path ?? null)} file_path=${JSON.stringify((checkResult.input as Record<string, unknown>).file_path ?? null)} command=${JSON.stringify((checkResult.input as Record<string, unknown>).command ?? null)}`);
+          }
         }
         this.send({ type: 'pre_tool_use_response', requestId, action: 'modify', input: checkResult.input });
         return;
@@ -1304,6 +1322,13 @@ export class PiAgent extends BaseAgent {
     args: Record<string, unknown>;
   }): Promise<void> {
     const normalizedArgs = normalizeSessionToolMetadataArgs(request.args);
+    if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+      const debugSessionId = this.config.session?.id || this._sessionId;
+      this.debug(`[tool-args-debug][main] tool_execute_request tool=${request.toolName} requestId=${request.requestId} sessionId=${debugSessionId} rawKeys=${Object.keys(request.args ?? {}).sort().join(',') || '∅'} normalizedKeys=${Object.keys(normalizedArgs).sort().join(',') || '∅'} rawPayload=${JSON.stringify(request.args ?? {})} normalizedPayload=${JSON.stringify(normalizedArgs)}`);
+      if (request.toolName === 'Read' || request.toolName === 'Bash') {
+        this.debug(`[tool-args-debug][main] native_tool_execute_request tool=${request.toolName} requestId=${request.requestId} sessionId=${debugSessionId} rawPath=${JSON.stringify((request.args as Record<string, unknown>).path ?? null)} rawFilePath=${JSON.stringify((request.args as Record<string, unknown>).file_path ?? null)} rawCommand=${JSON.stringify((request.args as Record<string, unknown>).command ?? null)} normalizedPath=${JSON.stringify((normalizedArgs as Record<string, unknown>).path ?? null)} normalizedFilePath=${JSON.stringify((normalizedArgs as Record<string, unknown>).file_path ?? null)} normalizedCommand=${JSON.stringify((normalizedArgs as Record<string, unknown>).command ?? null)}`);
+      }
+    }
 
     // Prerequisite check: block source tools until guide.md is read
     const prereqResult = this.prerequisiteManager.checkPrerequisites(request.toolName);
@@ -1318,6 +1343,10 @@ export class PiAgent extends BaseAgent {
 
     try {
       const result = await this.routeToolCall(request.toolName, normalizedArgs);
+      if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+        const debugSessionId = this.config.session?.id || this._sessionId;
+        this.debug(`[tool-args-debug][main] tool_execute_response tool=${request.toolName} requestId=${request.requestId} sessionId=${debugSessionId} isError=${result.isError ? 1 : 0} content=${JSON.stringify(result.content)}`);
+      }
       this.send({
         type: 'tool_execute_response',
         requestId: request.requestId,
@@ -1493,6 +1522,12 @@ export class PiAgent extends BaseAgent {
       }
 
       const ctx = this.getSessionToolContext();
+      if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+        const zodShapeKeys = typeof (def.inputSchema as any)?.shape === 'object' && (def.inputSchema as any).shape
+          ? Object.keys((def.inputSchema as any).shape).sort().join(',')
+          : '∅';
+        this.debug(`[tool-args-debug][main] session_tool_schema tool=${toolName} zodShapeKeys=${zodShapeKeys}`);
+      }
       if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && toolName === 'SubmitPlan') {
         this.debug(`[submit-plan-debug][main] executeSessionTool tool=${toolName} keys=${Object.keys(args ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof args._displayName === 'string' ? 1 : 0} hasIntent=${typeof args._intent === 'string' ? 1 : 0} payload=${JSON.stringify(args)}`);
       }

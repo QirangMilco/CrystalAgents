@@ -67,6 +67,7 @@ import { getDefaultSummarizationModel } from '../../shared/src/config/models.ts'
 import { createWebFetchTool } from './tools/web-fetch.ts';
 import { resolveSearchProvider } from './tools/search/resolve-provider.ts';
 import { createSearchTool } from './tools/search/create-search-tool.ts';
+import { validateNativeToolInput } from './native-tool-input.ts';
 
 // ============================================================
 // Types — JSONL Protocol
@@ -692,6 +693,9 @@ async function requestPreToolUseApproval(
   if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
     debugLog(`[tool-title-debug][subprocess] pre_tool_use_request ${sdkToolName} (${toolCallId ?? 'no-call-id'}) keys=${Object.keys(normalizedInput).sort().join(',') || '∅'} hasDisplayName=${typeof normalizedInput._displayName === 'string' ? 1 : 0} hasIntent=${typeof normalizedInput._intent === 'string' ? 1 : 0}`);
   }
+  if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+    debugLog(`[tool-args-debug][subprocess] pre_tool_use_request tool=${sdkToolName} requestId=${requestId} toolCallId=${toolCallId ?? '∅'} keys=${Object.keys(normalizedInput).sort().join(',') || '∅'} payload=${JSON.stringify(normalizedInput)}`);
+  }
   if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (sdkToolName === 'mcp__session__SubmitPlan' || sdkToolName === 'SubmitPlan')) {
     debugLog(`[submit-plan-debug][subprocess] pre_tool_use_request tool=${sdkToolName} toolCallId=${toolCallId ?? 'no-call-id'} keys=${Object.keys(normalizedInput).sort().join(',') || '∅'} hasDisplayName=${typeof normalizedInput._displayName === 'string' ? 1 : 0} hasIntent=${typeof normalizedInput._intent === 'string' ? 1 : 0} payload=${JSON.stringify(normalizedInput)}`);
   }
@@ -711,6 +715,11 @@ async function requestPreToolUseApproval(
   if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (sdkToolName === 'mcp__session__SubmitPlan' || sdkToolName === 'SubmitPlan')) {
     const responsePayload = response.action === 'modify' && response.input ? normalizeSessionToolMetadataArgs(response.input) : normalizedInput;
     debugLog(`[submit-plan-debug][subprocess] pre_tool_use_response tool=${sdkToolName} action=${response.action} keys=${Object.keys(responsePayload).sort().join(',') || '∅'} hasDisplayName=${typeof responsePayload._displayName === 'string' ? 1 : 0} hasIntent=${typeof responsePayload._intent === 'string' ? 1 : 0} payload=${JSON.stringify(responsePayload)}`);
+  }
+
+  if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+    const responsePayload = response.action === 'modify' && response.input ? normalizeSessionToolMetadataArgs(response.input) : normalizedInput;
+    debugLog(`[tool-args-debug][subprocess] pre_tool_use_response tool=${sdkToolName} requestId=${requestId} action=${response.action} keys=${Object.keys(responsePayload).sort().join(',') || '∅'} payload=${JSON.stringify(responsePayload)} reason=${JSON.stringify(response.reason ?? null)}`);
   }
 
   if (response.action === 'block') {
@@ -741,7 +750,12 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
     onUpdate?: (partialResult: AgentToolResult<any>) => void,
   ): Promise<AgentToolResult<any>> => {
     const sdkToolName = PI_TOOL_NAME_MAP[tool.name] || tool.name;
+    const isDebugNativeTool = process.env.CRAFT_DEBUG_TOOL_ARGS === '1' && (sdkToolName === 'Read' || sdkToolName === 'Bash');
     let inputObj: Record<string, unknown> = { ...(params as Record<string, unknown>) };
+
+    if (isDebugNativeTool) {
+      debugLog(`[tool-args-debug][subprocess] native_execute_start tool=${sdkToolName} toolCallId=${toolCallId} rawKeys=${Object.keys(params ?? {}).sort().join(',') || '∅'} rawPayload=${JSON.stringify(params ?? {})}`);
+    }
 
     // Extract intent before main process strips metadata (used for summarization)
     const intent = typeof inputObj._intent === 'string' ? inputObj._intent : undefined;
@@ -752,13 +766,34 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
       inputObj = { ...inputObj, file_path: inputObj.path };
     }
 
+    if (isDebugNativeTool) {
+      debugLog(`[tool-args-debug][subprocess] native_execute_pre_ptu tool=${sdkToolName} toolCallId=${toolCallId} keys=${Object.keys(inputObj).sort().join(',') || '∅'} payload=${JSON.stringify(inputObj)}`);
+    }
+
+    const validation = validateNativeToolInput(sdkToolName, inputObj);
+    if (!validation.ok) {
+      debugLog(`[tool-args-debug][subprocess] native_execute_invalid_input tool=${sdkToolName} toolCallId=${toolCallId} missing=${validation.missing} keys=${Object.keys(inputObj).sort().join(',') || '∅'} payload=${JSON.stringify(inputObj)}`);
+      return {
+        content: [{ type: 'text', text: validation.message }],
+        details: { isError: true },
+      };
+    }
+
     // Send to main process for permission checking + transforms
     inputObj = await requestPreToolUseApproval(sdkToolName, inputObj, toolCallId);
+
+    if (isDebugNativeTool) {
+      debugLog(`[tool-args-debug][subprocess] native_execute_post_ptu tool=${sdkToolName} toolCallId=${toolCallId} keys=${Object.keys(inputObj).sort().join(',') || '∅'} payload=${JSON.stringify(inputObj)}`);
+    }
 
     // Execute original tool with (potentially modified) input
     const result = await originalExecute(toolCallId, inputObj, signal, onUpdate);
 
     // --- Post-execute: large response summarization ---
+
+    if (isDebugNativeTool) {
+      debugLog(`[tool-args-debug][subprocess] native_execute_result tool=${sdkToolName} toolCallId=${toolCallId} isError=${result.details?.isError ? 1 : 0} contentTypes=${result.content.map(c => c.type).join(',') || '∅'}`);
+    }
 
     const resultText = result.content
       .filter((c): c is PiTextContent => c.type === 'text')
@@ -858,6 +893,9 @@ function buildProxyTools(): AgentTool<any>[] {
 
       if (process.env.CRAFT_DEBUG_SUBMIT_PLAN === '1' && (def.name === 'mcp__session__SubmitPlan' || def.name === 'SubmitPlan')) {
         debugLog(`[submit-plan-debug][subprocess] tool_execute_request tool=${def.name} requestId=${requestId} keys=${Object.keys(approvedInput).sort().join(',') || '∅'} hasDisplayName=${typeof approvedInput._displayName === 'string' ? 1 : 0} hasIntent=${typeof approvedInput._intent === 'string' ? 1 : 0} payload=${JSON.stringify(approvedInput)}`);
+      }
+      if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+        debugLog(`[tool-args-debug][subprocess] tool_execute_request tool=${def.name} requestId=${requestId} keys=${Object.keys(approvedInput).sort().join(',') || '∅'} payload=${JSON.stringify(approvedInput)}`);
       }
 
       send({
@@ -1369,13 +1407,20 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
 }
 
 function handleRegisterTools(msg: Extract<InboundMessage, { type: 'register_tools' }>): void {
-  if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+  if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1' || process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
     for (const tool of msg.tools) {
-      if (!tool.name.startsWith('mcp__session__')) continue;
-      const properties = (tool.inputSchema && typeof tool.inputSchema === 'object'
-        ? (tool.inputSchema as { properties?: Record<string, unknown> }).properties
+      const isDebugTool = tool.name.startsWith('mcp__session__') || tool.name === 'Read' || tool.name === 'Bash';
+      if (!isDebugTool) continue;
+      const inputSchema = (tool.inputSchema && typeof tool.inputSchema === 'object'
+        ? tool.inputSchema as { properties?: Record<string, unknown>; required?: string[] }
         : undefined) ?? {};
-      debugLog(`[tool-title-debug][subprocess] register_tool ${tool.name} hasDisplayNameSchema=${'_displayName' in properties ? 1 : 0} hasIntentSchema=${'_intent' in properties ? 1 : 0} propertyKeys=${Object.keys(properties).sort().join(',') || '∅'}`);
+      const properties = inputSchema.properties ?? {};
+      if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
+        debugLog(`[tool-title-debug][subprocess] register_tool ${tool.name} hasDisplayNameSchema=${'_displayName' in properties ? 1 : 0} hasIntentSchema=${'_intent' in properties ? 1 : 0} propertyKeys=${Object.keys(properties).sort().join(',') || '∅'}`);
+      }
+      if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+        debugLog(`[tool-args-debug][subprocess] register_tool ${tool.name} required=${Array.isArray(inputSchema.required) ? inputSchema.required.join(',') : '∅'} propertyKeys=${Object.keys(properties).sort().join(',') || '∅'}`);
+      }
     }
   }
 
@@ -1396,6 +1441,9 @@ function handleRegisterTools(msg: Extract<InboundMessage, { type: 'register_tool
 }
 
 function handleToolExecuteResponse(msg: Extract<InboundMessage, { type: 'tool_execute_response' }>): void {
+  if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+    debugLog(`[tool-args-debug][subprocess] tool_execute_response requestId=${msg.requestId} isError=${msg.result.isError ? 1 : 0} content=${JSON.stringify(msg.result.content)}`);
+  }
   const pending = pendingToolExecutions.get(msg.requestId);
   if (pending) {
     pendingToolExecutions.delete(msg.requestId);
@@ -1406,6 +1454,10 @@ function handleToolExecuteResponse(msg: Extract<InboundMessage, { type: 'tool_ex
 }
 
 function handlePreToolUseResponse(msg: Extract<InboundMessage, { type: 'pre_tool_use_response' }>): void {
+  if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
+    const normalizedInput = msg.action === 'modify' && msg.input ? normalizeSessionToolMetadataArgs(msg.input) : undefined;
+    debugLog(`[tool-args-debug][subprocess] inbound_pre_tool_use_response requestId=${msg.requestId} action=${msg.action} keys=${Object.keys(normalizedInput ?? {}).sort().join(',') || '∅'} payload=${JSON.stringify(normalizedInput ?? null)} reason=${JSON.stringify(msg.reason ?? null)}`);
+  }
   const pending = pendingPreToolUse.get(msg.requestId);
   if (pending) {
     pendingPreToolUse.delete(msg.requestId);
@@ -1686,7 +1738,7 @@ async function processMessage(msg: InboundMessage): Promise<void> {
 
 function main(): void {
   debugLog('Pi agent server starting');
-  debugLog(`[submit-plan-debug][subprocess] startup env CRAFT_DEBUG_SUBMIT_PLAN=${process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? 'unset'} CRAFT_DEBUG_TOOL_TITLES=${process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset'}`);
+  debugLog(`[submit-plan-debug][subprocess] startup env CRAFT_DEBUG_SUBMIT_PLAN=${process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? 'unset'} CRAFT_DEBUG_TOOL_TITLES=${process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset'} CRAFT_DEBUG_TOOL_ARGS=${process.env.CRAFT_DEBUG_TOOL_ARGS ?? 'unset'}`);
 
   const rl = createInterface({ input: process.stdin });
 
