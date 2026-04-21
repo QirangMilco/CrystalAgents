@@ -279,7 +279,7 @@ jobs:
       - build-linux-x64
       - build-macos
     env:
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.CRYSTAL_RELEASE_TOKEN }}
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
       RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
