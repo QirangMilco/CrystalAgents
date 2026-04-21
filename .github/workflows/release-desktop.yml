@@ -174,13 +174,31 @@ jobs:
         working-directory: apps/electron
         run: bash scripts/build-linux.sh x64
 
+      - name: Normalize Linux artifact name
+        shell: bash
+        run: |
+          EXPECTED_PATH="apps/electron/release/Crystal-Agents-${RELEASE_VERSION}-x64.AppImage"
+          ACTUAL_PATH=$(find apps/electron/release -maxdepth 1 -type f -name "*.AppImage" | head -n 1)
+
+          if [[ -z "$ACTUAL_PATH" ]]; then
+            echo "No AppImage artifact found" >&2
+            exit 1
+          fi
+
+          if [[ "$ACTUAL_PATH" != "$EXPECTED_PATH" ]]; then
+            echo "Renaming Linux artifact: $ACTUAL_PATH -> $EXPECTED_PATH"
+            mv "$ACTUAL_PATH" "$EXPECTED_PATH"
+          else
+            echo "Linux artifact name already matches expected path"
+          fi
+
       - name: Upload Linux x64 artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-linux-x64
           if-no-files-found: error
           path: |
-            apps/electron/release/*-${{ env.RELEASE_VERSION }}-x64.AppImage
+            apps/electron/release/Crystal-Agents-${{ env.RELEASE_VERSION }}-x64.AppImage
 
   build-macos:
     name: Release macOS
