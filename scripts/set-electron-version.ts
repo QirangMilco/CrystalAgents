@@ -30,23 +30,23 @@ function buildCandidateVersion(baseVersion: string): string {
   return `${baseVersion}-dev.${runNumber}`;
 }
 
-function getReleaseNumber(): string {
-  const releaseNumber = process.env.CRYSTAL_RELEASE_NUMBER?.trim();
-  if (!releaseNumber) {
-    fail('CRYSTAL_RELEASE_NUMBER is required for release builds');
+function getCrystalVersion(): string {
+  const version = process.env.CRYSTAL_VERSION?.trim();
+  if (!version) {
+    fail('CRYSTAL_VERSION is required for release builds');
   }
-  if (!/^\d+$/.test(releaseNumber)) {
-    fail('CRYSTAL_RELEASE_NUMBER must be a positive integer');
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+    fail(`CRYSTAL_VERSION must be a valid semver version, received: ${version}`);
   }
-  return releaseNumber;
+  return version;
 }
 
-function buildReleaseVersion(baseVersion: string): string {
-  return `${baseVersion}.${getReleaseNumber()}`;
+function buildReleaseVersion(_baseVersion: string): string {
+  return getCrystalVersion();
 }
 
-function buildPrereleaseVersion(baseVersion: string): string {
-  return `${baseVersion}-rc.${getReleaseNumber()}`;
+function buildPrereleaseVersion(_baseVersion: string): string {
+  return getCrystalVersion();
 }
 
 function main(): void {
