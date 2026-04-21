@@ -17,6 +17,10 @@ on:
         required: true
         default: false
         type: boolean
+      target_ref:
+        description: "可选。指定要发布的提交 SHA、分支名或 tag；留空则使用当前触发提交"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -34,6 +38,7 @@ jobs:
       release_version: ${{ steps.meta.outputs.release_version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       release_title: ${{ steps.meta.outputs.release_title }}
+      target_ref: ${{ steps.meta.outputs.target_ref }}
 
     steps:
       - name: Checkout
@@ -58,15 +63,21 @@ jobs:
           fi
           RELEASE_TAG="v${RELEASE_VERSION}"
           RELEASE_TITLE="Crystal Agents ${RELEASE_VERSION}"
+          TARGET_REF='${{ inputs.target_ref }}'
+          if [[ -z "$TARGET_REF" ]]; then
+            TARGET_REF="$GITHUB_SHA"
+          fi
 
           echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
           echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
+          echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
 
           echo "Base version: $BASE_VERSION"
           echo "Release version: $RELEASE_VERSION"
           echo "Release tag: $RELEASE_TAG"
+          echo "Target ref: $TARGET_REF"
 
   build-windows-x64:
     name: Release Windows x64
@@ -80,6 +91,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -131,6 +144,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -182,6 +197,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -246,7 +263,7 @@ jobs:
           path: apps/electron/release/**/Crystal-Agents-${{ env.RELEASE_VERSION }}-x64.zip
 
   publish-release:
-    name: Publish draft release
+    name: Publish release
     runs-on: ubuntu-latest
     needs:
       - prepare-release
@@ -259,6 +276,7 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
       RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
       RELEASE_TITLE: ${{ needs.prepare-release.outputs.release_title }}
+      TARGET_REF: ${{ needs.prepare-release.outputs.target_ref }}
 
     steps:
       - name: Download build artifacts
@@ -288,9 +306,9 @@ jobs:
             echo "Release $RELEASE_TAG already exists, uploading assets"
             gh release upload "$RELEASE_TAG" "${FILES[@]}" --clobber --repo "$GH_REPO"
           else
-            echo "Creating draft release $RELEASE_TAG"
+            echo "Creating release $RELEASE_TAG"
             CREATE_ARGS=(
-              --target "$GITHUB_SHA"
+              --target "$TARGET_REF"
               --title "$RELEASE_TITLE"
               --notes "Release $RELEASE_VERSION"
             )
