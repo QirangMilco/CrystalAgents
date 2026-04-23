@@ -1245,6 +1245,23 @@ interface ActivityGroupRowProps {
   displayMode?: 'informative' | 'detailed'
 }
 
+function hasRenderableActivityMetadata(activity: ActivityItem): boolean {
+  if (activity.type === 'tool') {
+    return Boolean(
+      activity.displayName
+      || activity.intent
+      || activity.toolDisplayMeta?.displayName
+      || activity.toolInput?.description
+    )
+  }
+
+  if (activity.type === 'intermediate') {
+    return Boolean(activity.content?.trim())
+  }
+
+  return true
+}
+
 /**
  * Renders a Task subagent with its child activities grouped together.
  * Provides visual containment and collapsible children.
@@ -2897,25 +2914,29 @@ export const TurnCard = React.memo(function TurnCard({
     () => allSortedActivities.filter(a => a.type !== 'plan'),
     [allSortedActivities]
   )
+  const visibleActivities = useMemo(
+    () => sortedActivities.filter(hasRenderableActivityMetadata),
+    [sortedActivities]
+  )
 
   // Check if we have any Task subagents - if so, use grouped view
   const hasTaskSubagents = useMemo(
-    () => sortedActivities.some(a => a.toolName === 'Task'),
-    [sortedActivities]
+    () => visibleActivities.some(a => a.toolName === 'Task'),
+    [visibleActivities]
   )
 
   // Group activities by parent Task for better visualization
   // Only group if there are Task subagents, otherwise keep flat for simpler view
   const groupedActivities = useMemo(
-    () => hasTaskSubagents ? groupActivitiesByParent(sortedActivities) : null,
-    [sortedActivities, hasTaskSubagents]
+    () => hasTaskSubagents ? groupActivitiesByParent(visibleActivities) : null,
+    [visibleActivities, hasTaskSubagents]
   )
 
   // Pre-compute which activities are last children - O(n) instead of O(n²) per-render check
   // Only used for flat view (non-grouped)
   const lastChildSet = useMemo(
-    () => !hasTaskSubagents ? computeLastChildSet(sortedActivities) : new Set<string>(),
-    [sortedActivities, hasTaskSubagents]
+    () => !hasTaskSubagents ? computeLastChildSet(visibleActivities) : new Set<string>(),
+    [visibleActivities, hasTaskSubagents]
   )
 
   // Don't render if nothing to show and turn is complete
@@ -2942,8 +2963,8 @@ export const TurnCard = React.memo(function TurnCard({
     })
     && !response
 
-  // Only count non-plan activities for the collapsible section
-  const hasActivities = sortedActivities.length > 0
+  // Only count metadata-ready non-plan activities for the collapsible section
+  const hasActivities = visibleActivities.length > 0
 
   // Determine if thinking indicator should show using the phase-based state machine.
   // This properly handles the "gap" state (awaiting) between tool completion and next action,
@@ -2957,6 +2978,7 @@ export const TurnCard = React.memo(function TurnCard({
       hasActivities,
       activityCount: activities.length,
       sortedActivityCount: sortedActivities.length,
+      visibleActivityCount: visibleActivities.length,
       isExpanded,
       isThinking,
       shouldShowWaitingIndicator,
@@ -2978,7 +3000,7 @@ export const TurnCard = React.memo(function TurnCard({
           status: a.status,
         })),
     }, 'CRAFT_DEBUG_STREAMING_STEPS')
-  }, [activities.length, hasActivities, hasNoMeaningfulWork, isBuffering, isComplete, isExpanded, isStreaming, isThinking, previewText, response?.messageId, shouldShowWaitingIndicator, sortedActivities, turnId, turnPhase])
+  }, [activities.length, hasActivities, hasNoMeaningfulWork, isBuffering, isComplete, isExpanded, isStreaming, isThinking, previewText, response?.messageId, shouldShowWaitingIndicator, sortedActivities, turnId, turnPhase, visibleActivities.length])
 
   if (hasNoMeaningfulWork) {
     emitSafeRendererDebugLog('[streaming-steps-debug][turncard] suppress empty interrupted turn', {
@@ -3019,7 +3041,7 @@ export const TurnCard = React.memo(function TurnCard({
 
             {/* Step count badge */}
             <span className="-ml-0.5 shrink-0 px-1.5 py-0.5 rounded-[4px] bg-background shadow-minimal text-[10px] font-medium tabular-nums">
-              {activities.length}
+              {visibleActivities.length}
             </span>
 
             {/* Preview text with crossfade + inline failure count */}
@@ -3067,10 +3089,10 @@ export const TurnCard = React.memo(function TurnCard({
                   ref={activitiesContainerRef}
                   className={cn(
                     "pl-4 pr-2 py-0 space-y-0.5 border-l-2 border-muted ml-[13px]",
-                    sortedActivities.length > SIZE_CONFIG.maxVisibleActivities && "rounded-r-md overflow-y-auto scrollbar-hover py-1.5"
+                    visibleActivities.length > SIZE_CONFIG.maxVisibleActivities && "rounded-r-md overflow-y-auto scrollbar-hover py-1.5"
                   )}
                   style={{
-                    maxHeight: sortedActivities.length > SIZE_CONFIG.maxVisibleActivities
+                    maxHeight: visibleActivities.length > SIZE_CONFIG.maxVisibleActivities
                       ? SIZE_CONFIG.maxVisibleActivities * SIZE_CONFIG.activityRowHeight
                       : undefined
                   }}
@@ -3112,7 +3134,7 @@ export const TurnCard = React.memo(function TurnCard({
                     ))
                   ) : (
                     /* Flat view for simple tool calls */
-                    sortedActivities.map((activity, index) => (
+                    visibleActivities.map((activity, index) => (
                       <motion.div
                         key={activity.id}
                         initial={
@@ -3141,7 +3163,7 @@ export const TurnCard = React.memo(function TurnCard({
                       initial={{ opacity: 0, x: -8 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{
-                        delay: Math.min(sortedActivities.length, SIZE_CONFIG.staggeredAnimationLimit) * 0.03,
+                        delay: Math.min(visibleActivities.length, SIZE_CONFIG.staggeredAnimationLimit) * 0.03,
                         duration: 0.3,
                         ease: "easeOut"
                       }}
