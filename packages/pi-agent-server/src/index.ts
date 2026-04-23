@@ -17,7 +17,7 @@
 import http from 'node:http';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
-import { mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { mkdirSync, readdirSync, statSync, existsSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 // Pi SDK
@@ -235,10 +235,22 @@ let initConfig: Extract<InboundMessage, { type: 'init' }> | null = null;
 
 // Mutable state
 let currentUserMessage = '';
+let currentPromptRequestId: string | null = null;
+let activeToolContext: {
+  toolName?: string;
+  toolCallId?: string;
+  requestId?: string;
+  sourceLayer?: 'sdk-ajv' | 'native-validation' | 'auto-compaction';
+  args?: Record<string, unknown>;
+} | null = null;
 
 // Pending promises for async handshakes
 const pendingPreToolUse = new Map<string, { resolve: (response: { action: string; input?: Record<string, unknown>; reason?: string }) => void }>();
-const pendingToolExecutions = new Map<string, { resolve: (result: { content: string; isError: boolean }) => void }>();
+const pendingToolExecutions = new Map<string, {
+  resolve: (result: { content: string; isError: boolean }) => void;
+  toolName?: string;
+  args?: Record<string, unknown>;
+}>();
 
 // Pending session MCP tool calls for completion detection
 const pendingSessionToolCalls = new Map<string, { toolName: string; arguments: Record<string, unknown> }>();
@@ -277,6 +289,444 @@ function send(msg: OutboundMessage): void {
 function debugLog(message: string): void {
   // Write debug messages to stderr so they don't interfere with JSONL protocol
   process.stderr.write(`[pi-server] ${message}\n`);
+}
+
+function compactionDebugEnabled(): boolean {
+  return process.env.CRAFT_DEBUG_COMPACTION === '1';
+}
+
+function compactionSummaryIoEnabled(): boolean {
+  return process.env.CRAFT_DEBUG_COMPACTION_SUMMARY_IO === '1';
+}
+
+function getElectronMainLogPath(): string {
+  return join(homedir(), 'Library/Logs/@crystal-agent/electron/main.log');
+}
+
+function persistCompactionFailure(message: string): void {
+  const line = `${new Date().toISOString()} [pi-server] [compaction-summary-io] ${message}\n`;
+  try {
+    const logPath = getElectronMainLogPath();
+    mkdirSync(join(logPath, '..'), { recursive: true });
+    appendFileSync(logPath, line, 'utf8');
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[pi-server] failed to persist compaction failure log: ${errorMessage}\n`);
+  }
+}
+
+function logCompactionDebug(message: string): void {
+  if (compactionDebugEnabled()) {
+    debugLog(`[compaction-debug] ${message}`);
+  }
+}
+
+function logCompactionSummaryIo(message: string): void {
+  if (compactionSummaryIoEnabled()) {
+    debugLog(`[compaction-summary-io] ${message}`);
+  }
+}
+
+function logCompactionFailure(message: string): void {
+  debugLog(`[compaction-summary-io] ${message}`);
+  persistCompactionFailure(message);
+}
+
+function isToolValidationFailureMessage(message: string): boolean {
+  return message.includes('Validation failed for tool "') && message.includes('Received arguments:');
+}
+
+function persistToolValidationFailure(message: string): void {
+  const line = `${new Date().toISOString()} [pi-server] [tool-validation] ${message}\n`;
+  try {
+    const logPath = getElectronMainLogPath();
+    mkdirSync(join(logPath, '..'), { recursive: true });
+    appendFileSync(logPath, line, 'utf8');
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[pi-server] failed to persist tool validation log: ${errorMessage}\n`);
+  }
+}
+
+function logToolValidationFailure(message: string): void {
+  debugLog(`[tool-validation] ${message}`);
+  persistToolValidationFailure(message);
+}
+
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function getPromptSnippet(): string {
+  const text = compactWhitespace(currentUserMessage || '');
+  if (!text) return '∅';
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+}
+
+function formatFailureContext(base: Record<string, string | number | undefined>, extraDebug?: Record<string, string | number | undefined>): string {
+  const fields: Array<[string, string | number | undefined]> = [
+    ['sessionId', initConfig?.sessionId],
+    ['requestId', currentPromptRequestId ?? activeToolContext?.requestId],
+    ['toolCallId', activeToolContext?.toolCallId],
+    ['toolName', activeToolContext?.toolName],
+    ['sourceLayer', activeToolContext?.sourceLayer],
+    ...Object.entries(base),
+  ];
+  if (process.env.CRAFT_DEBUG === '1') {
+    fields.push(['promptSnippet', getPromptSnippet()]);
+    for (const [key, value] of Object.entries(extraDebug ?? {})) {
+      fields.push([key, value]);
+    }
+    if (activeToolContext?.args) {
+      fields.push(['arguments', JSON.stringify(activeToolContext.args)]);
+    }
+  }
+  return fields
+    .filter(([, value]) => value !== undefined && value !== '')
+    .map(([key, value]) => `${key}=${JSON.stringify(String(value))}`)
+    .join(' ');
+}
+
+function parsePositiveIntEnv(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value <= 0) {
+    debugLog(`[compaction-debug] ignoring invalid ${name}=${JSON.stringify(raw)} (expected positive integer)`);
+    return undefined;
+  }
+  return value;
+}
+
+function parseUnitIntervalEnv(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0 || value >= 1) {
+    debugLog(`[compaction-debug] ignoring invalid ${name}=${JSON.stringify(raw)} (expected 0-1 exclusive)`);
+    return undefined;
+  }
+  return value;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function calculateContextTokensFromUsage(usage: {
+  totalTokens?: number;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+} | undefined): number | undefined {
+  if (!usage) return undefined;
+  return usage.totalTokens || (usage.input || 0) + (usage.output || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0);
+}
+
+function estimateMessageTextChars(message: any): number {
+  if (!message) return 0;
+  if (typeof message.content === 'string') return message.content.length;
+  if (!Array.isArray(message.content)) return 0;
+  let chars = 0;
+  for (const block of message.content) {
+    if (block?.type === 'text' && typeof block.text === 'string') chars += block.text.length;
+    if (block?.type === 'thinking' && typeof block.thinking === 'string') chars += block.thinking.length;
+    if (block?.type === 'toolCall') chars += JSON.stringify(block.arguments ?? '').length;
+  }
+  return chars;
+}
+
+function summarizeMessageWindow(messages: any[] | undefined): string {
+  if (!Array.isArray(messages) || messages.length === 0) return 'messages=0';
+  const assistantCount = messages.filter(message => message?.role === 'assistant').length;
+  const userCount = messages.filter(message => message?.role === 'user').length;
+  const toolResultCount = messages.filter(message => message?.role === 'toolResult').length;
+  const approxChars = messages.reduce((sum, message) => sum + estimateMessageTextChars(message), 0);
+  return `messages=${messages.length} users=${userCount} assistants=${assistantCount} toolResults=${toolResultCount} approxChars=${approxChars}`;
+}
+
+function describeModel(model: any): string {
+  if (!model) return 'model=missing';
+  return `provider=${model.provider ?? 'unknown'} model=${model.id ?? 'unknown'} contextWindow=${model.contextWindow ?? 0} reasoning=${model.reasoning ? 1 : 0}`;
+}
+
+function describeCompactionSettings(settings: any): string {
+  if (!settings) return 'settings=missing';
+  return `enabled=${settings.enabled ? 1 : 0} reserveTokens=${settings.reserveTokens ?? 'na'} keepRecentTokens=${settings.keepRecentTokens ?? 'na'}`;
+}
+
+function describeCompactionResult(result: any): string {
+  if (!result) return 'result=missing';
+  const summaryLength = typeof result.summary === 'string' ? result.summary.length : 0;
+  const readFiles = Array.isArray(result.details?.readFiles) ? result.details.readFiles.length : 0;
+  const modifiedFiles = Array.isArray(result.details?.modifiedFiles) ? result.details.modifiedFiles.length : 0;
+  return `summaryLength=${summaryLength} firstKeptEntryId=${result.firstKeptEntryId ?? 'missing'} tokensBefore=${result.tokensBefore ?? 'na'} readFiles=${readFiles} modifiedFiles=${modifiedFiles}`;
+}
+
+function describeAbortController(value: unknown): string {
+  if (!value || typeof value !== 'object') return 'missing';
+  const signal = (value as { signal?: AbortSignal }).signal;
+  if (!signal) return 'no-signal';
+  return signal.aborted ? 'present:aborted' : 'present:active';
+}
+
+function patchSessionAutoCompaction(session: AgentSession): void {
+  const sessionInternal = session as any;
+  if (sessionInternal.__craftAutoCompactionPatched) {
+    return;
+  }
+
+  const originalRunAutoCompaction = sessionInternal._runAutoCompaction;
+  const originalCheckCompaction = sessionInternal._checkCompaction;
+  if (typeof originalRunAutoCompaction !== 'function') {
+    throw new Error(
+      'Pi SDK internal API changed: _runAutoCompaction not found. ' +
+      'Update auto-compaction patch for the new SDK version.',
+    );
+  }
+  if (typeof originalCheckCompaction !== 'function') {
+    throw new Error(
+      'Pi SDK internal API changed: _checkCompaction not found. ' +
+      'Update auto-compaction patch for the new SDK version.',
+    );
+  }
+
+  const debugContextWindow = parsePositiveIntEnv('CRAFT_DEBUG_COMPACTION_CONTEXT_WINDOW');
+  const debugThreshold = parseUnitIntervalEnv('CRAFT_DEBUG_COMPACTION_THRESHOLD');
+  const forceCompactEveryTurns = parsePositiveIntEnv('CRAFT_DEBUG_FORCE_COMPACT_EVERY_TURNS');
+  const compactionDelayMs = parsePositiveIntEnv('CRAFT_DEBUG_COMPACTION_DELAY_MS');
+
+  sessionInternal.__craftAutoCompactionPatched = true;
+  sessionInternal.__craftAutoCompactionSequence = Promise.resolve();
+  sessionInternal.__craftAutoCompactionRunId = 0;
+  sessionInternal.__craftAssistantTurnCount = 0;
+  sessionInternal.__craftActiveCompactionRun = null;
+  sessionInternal.__craftCompactionDebugConfig = {
+    debugContextWindow,
+    debugThreshold,
+    forceCompactEveryTurns,
+    compactionDelayMs,
+  };
+
+  sessionInternal._runAutoCompaction = async function patchedRunAutoCompaction(this: any, reason: string, willRetry: boolean) {
+    const runId = ++this.__craftAutoCompactionRunId;
+    const execute = async () => {
+      const delayMs = this.__craftCompactionDebugConfig?.compactionDelayMs;
+      const startedAt = Date.now();
+      this.__craftActiveCompactionRun = { runId, reason, willRetry, startedAt };
+      logCompactionDebug(
+        `start run=${runId} reason=${reason} willRetry=${willRetry ? 1 : 0} ` +
+        `isCompacting=${this.isCompacting ? 1 : 0} autoController=${describeAbortController(this._autoCompactionAbortController)} ` +
+        `manualController=${describeAbortController(this._compactionAbortController)} delayMs=${delayMs ?? 0}`,
+      );
+
+      if (compactionSummaryIoEnabled()) {
+        const settings = this.settingsManager?.getCompactionSettings?.();
+        const branchEntries = this.sessionManager?.getBranch?.() ?? [];
+        const stateMessages = this.agent?.state?.messages ?? [];
+        const trailingCompactionEntry = branchEntries.length > 0 && branchEntries[branchEntries.length - 1]?.type === 'compaction';
+        logCompactionSummaryIo(
+          `preflight run=${runId} reason=${reason} willRetry=${willRetry ? 1 : 0} ` +
+          `${describeModel(this.model)} ${describeCompactionSettings(settings)} ` +
+          `branchEntries=${branchEntries.length} trailingCompactionEntry=${trailingCompactionEntry ? 1 : 0} ` +
+          `${summarizeMessageWindow(stateMessages)}`,
+        );
+        try {
+          const authResult = this.model ? await this._modelRegistry?.getApiKeyAndHeaders?.(this.model) : undefined;
+          logCompactionSummaryIo(
+            `auth run=${runId} modelPresent=${this.model ? 1 : 0} ok=${authResult?.ok ? 1 : 0} ` +
+            `hasApiKey=${authResult?.apiKey ? 1 : 0} headerCount=${authResult?.headers ? Object.keys(authResult.headers).length : 0}`,
+          );
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.stack || error.message : String(error);
+          logCompactionSummaryIo(`auth-error run=${runId} error=${JSON.stringify(errorMessage)}`);
+        }
+      }
+
+      try {
+        if (delayMs) {
+          logCompactionDebug(`delay-before-run run=${runId} delayMs=${delayMs}`);
+          await delay(delayMs);
+        }
+        const result = await originalRunAutoCompaction.call(this, reason, willRetry);
+        logCompactionDebug(
+          `finish run=${runId} reason=${reason} autoController=${describeAbortController(this._autoCompactionAbortController)} ` +
+          `manualController=${describeAbortController(this._compactionAbortController)}`,
+        );
+        if (compactionSummaryIoEnabled()) {
+          logCompactionSummaryIo(`return run=${runId} reason=${reason} elapsedMs=${Date.now() - startedAt}`);
+        }
+        return result;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.stack || error.message : String(error);
+        logCompactionDebug(
+          `error run=${runId} reason=${reason} autoController=${describeAbortController(this._autoCompactionAbortController)} ` +
+          `manualController=${describeAbortController(this._compactionAbortController)} error=${JSON.stringify(errorMessage)}`,
+        );
+        activeToolContext = {
+          sourceLayer: 'auto-compaction',
+        };
+        const failureMessage = formatFailureContext(
+          {
+            category: 'auto-compaction',
+            runId,
+            reason,
+            elapsedMs: Date.now() - startedAt,
+            model: describeModel(this.model),
+            settings: describeCompactionSettings(this.settingsManager?.getCompactionSettings?.()),
+            error: errorMessage,
+            autoController: describeAbortController(this._autoCompactionAbortController),
+            manualController: describeAbortController(this._compactionAbortController),
+          },
+          {
+            willRetry: willRetry ? 1 : 0,
+            branchSummary: summarizeMessageWindow(this.agent?.state?.messages ?? []),
+          },
+        );
+        if (compactionSummaryIoEnabled()) {
+          logCompactionSummaryIo(failureMessage);
+        } else {
+          logCompactionFailure(failureMessage);
+        }
+        throw error;
+      } finally {
+        if (this.__craftActiveCompactionRun?.runId === runId) {
+          this.__craftActiveCompactionRun = null;
+        }
+      }
+    };
+
+    const sequence = Promise.resolve(this.__craftAutoCompactionSequence)
+      .catch(() => undefined)
+      .then(execute);
+
+    this.__craftAutoCompactionSequence = sequence.catch(() => undefined);
+    return sequence;
+  };
+
+  const originalEmit = sessionInternal._emit;
+  if (typeof originalEmit === 'function') {
+    sessionInternal._emit = function patchedEmit(this: any, event: any) {
+      if (compactionSummaryIoEnabled() && event?.type === 'compaction_start') {
+        const activeRun = this.__craftActiveCompactionRun;
+        logCompactionSummaryIo(
+          `event-start run=${activeRun?.runId ?? 'na'} reason=${event.reason ?? activeRun?.reason ?? 'unknown'} ` +
+          `autoController=${describeAbortController(this._autoCompactionAbortController)} ` +
+          `manualController=${describeAbortController(this._compactionAbortController)}`,
+        );
+      }
+      if (event?.type === 'compaction_end') {
+        const activeRun = this.__craftActiveCompactionRun;
+        const elapsedMs = activeRun?.startedAt ? Date.now() - activeRun.startedAt : 'na';
+        activeToolContext = {
+          sourceLayer: 'auto-compaction',
+        };
+        const message = formatFailureContext(
+          {
+            category: 'auto-compaction',
+            runId: activeRun?.runId ?? 'na',
+            reason: event.reason ?? activeRun?.reason ?? 'unknown',
+            aborted: event.aborted ? 1 : 0,
+            willRetry: event.willRetry ? 1 : 0,
+            elapsedMs,
+            model: describeModel(this.model),
+            settings: describeCompactionSettings(this.settingsManager?.getCompactionSettings?.()),
+            result: describeCompactionResult(event.result),
+            error: event.errorMessage ?? '',
+            autoController: describeAbortController(this._autoCompactionAbortController),
+            manualController: describeAbortController(this._compactionAbortController),
+          },
+          {
+            branchSummary: summarizeMessageWindow(this.agent?.state?.messages ?? []),
+          },
+        );
+        if (event.errorMessage) {
+          logCompactionFailure(message);
+        } else if (compactionSummaryIoEnabled()) {
+          logCompactionSummaryIo(message);
+        }
+      }
+      return originalEmit.call(this, event);
+    };
+  }
+
+  sessionInternal._checkCompaction = async function patchedCheckCompaction(this: any, assistantMessage: any, skipAbortedCheck = true) {
+    const settings = this.settingsManager?.getCompactionSettings?.();
+    if (!settings?.enabled) return;
+    if (skipAbortedCheck && assistantMessage?.stopReason === 'aborted') return;
+
+    const debugConfig = this.__craftCompactionDebugConfig ?? {};
+    const sameModel = !!(this.model && assistantMessage?.provider === this.model.provider && assistantMessage?.model === this.model.id);
+    const currentTurn = ++this.__craftAssistantTurnCount;
+
+    const originalContextWindow = this.model?.contextWindow ?? 0;
+    const effectiveContextWindow = debugConfig.debugContextWindow || originalContextWindow;
+    const effectiveReserveTokens = debugConfig.debugThreshold && effectiveContextWindow > 0
+      ? Math.max(1, Math.floor(effectiveContextWindow * (1 - debugConfig.debugThreshold)))
+      : settings.reserveTokens;
+
+    const entries = this.sessionManager?.getBranch?.() ?? [];
+    const compactionEntry = (() => {
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i]?.type === 'compaction') return entries[i];
+      }
+      return null;
+    })();
+
+    const assistantIsFromBeforeCompaction = !!(
+      compactionEntry &&
+      assistantMessage?.timestamp <= new Date(compactionEntry.timestamp).getTime()
+    );
+    if (assistantIsFromBeforeCompaction) return;
+
+    const forcedByTurn = !!(
+      debugConfig.forceCompactEveryTurns &&
+      currentTurn % debugConfig.forceCompactEveryTurns === 0
+    );
+
+    if (assistantMessage?.stopReason === 'error') {
+      logCompactionDebug(
+        `check turn=${currentTurn} stopReason=error sameModel=${sameModel ? 1 : 0} ` +
+        `originalContextWindow=${originalContextWindow} effectiveContextWindow=${effectiveContextWindow} ` +
+        `forceEveryTurns=${debugConfig.forceCompactEveryTurns ?? 0} forcedByTurn=${forcedByTurn ? 1 : 0} delegated=1`,
+      );
+      if (forcedByTurn) {
+        await this._runAutoCompaction('threshold', false);
+        return;
+      }
+      return originalCheckCompaction.call(this, assistantMessage, skipAbortedCheck);
+    }
+
+    const contextTokens = calculateContextTokensFromUsage(assistantMessage?.usage);
+    const thresholdTriggered = typeof contextTokens === 'number' && effectiveContextWindow > 0
+      ? contextTokens > effectiveContextWindow - effectiveReserveTokens
+      : false;
+
+    logCompactionDebug(
+      `check turn=${currentTurn} stopReason=${assistantMessage?.stopReason ?? 'unknown'} sameModel=${sameModel ? 1 : 0} ` +
+      `contextTokens=${contextTokens ?? 'na'} originalContextWindow=${originalContextWindow} effectiveContextWindow=${effectiveContextWindow} ` +
+      `reserveTokens=${settings.reserveTokens} effectiveReserveTokens=${effectiveReserveTokens} ` +
+      `forceEveryTurns=${debugConfig.forceCompactEveryTurns ?? 0} forcedByTurn=${forcedByTurn ? 1 : 0} ` +
+      `threshold=${debugConfig.debugThreshold ?? 'default'} thresholdTriggered=${thresholdTriggered ? 1 : 0}`,
+    );
+
+    if (forcedByTurn || thresholdTriggered) {
+      await this._runAutoCompaction('threshold', false);
+      return;
+    }
+
+    return originalCheckCompaction.call(this, assistantMessage, skipAbortedCheck);
+  };
+
+  logCompactionDebug(
+    `Installed Pi SDK auto-compaction patch contextWindow=${debugContextWindow ?? 'default'} ` +
+    `threshold=${debugThreshold ?? 'default'} forceEveryTurns=${forceCompactEveryTurns ?? 0} delayMs=${compactionDelayMs ?? 0}`,
+  );
+  logCompactionSummaryIo(
+    `Installed compaction summary diagnostics enabled=1 contextWindow=${debugContextWindow ?? 'default'} ` +
+    `threshold=${debugThreshold ?? 'default'} forceEveryTurns=${forceCompactEveryTurns ?? 0} delayMs=${compactionDelayMs ?? 0}`,
+  );
 }
 
 /** Find the most recent .jsonl session file in a directory. */
@@ -648,6 +1098,8 @@ async function ensureSession(): Promise<AgentSession> {
     );
   }
 
+  patchSessionAutoCompaction(piSession);
+
   const baseToolsOverride: Record<string, AgentTool<any>> = {};
   for (const tool of allTools) {
     baseToolsOverride[tool.name] = tool;
@@ -773,6 +1225,19 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
     const validation = validateNativeToolInput(sdkToolName, inputObj);
     if (!validation.ok) {
       debugLog(`[tool-args-debug][subprocess] native_execute_invalid_input tool=${sdkToolName} toolCallId=${toolCallId} missing=${validation.missing} keys=${Object.keys(inputObj).sort().join(',') || '∅'} payload=${JSON.stringify(inputObj)}`);
+      activeToolContext = {
+        toolName: sdkToolName,
+        toolCallId,
+        sourceLayer: 'native-validation',
+        args: inputObj,
+      };
+      logToolValidationFailure(formatFailureContext({
+        category: 'tool-validation',
+        toolName: sdkToolName,
+        missing: validation.missing,
+        message: validation.message,
+        sourceLayer: 'native-validation',
+      }));
       return {
         content: [{ type: 'text', text: validation.message }],
         details: { isError: true },
@@ -906,7 +1371,7 @@ function buildProxyTools(): AgentTool<any>[] {
       });
 
       const result = await new Promise<{ content: string; isError: boolean }>((resolve) => {
-        pendingToolExecutions.set(requestId, { resolve });
+        pendingToolExecutions.set(requestId, { resolve, toolName: def.name, args: approvedInput });
       });
 
       return {
@@ -1202,7 +1667,7 @@ function handleSessionEvent(event: AgentSessionEvent): void {
           for (const tc of prefetchableToolCalls) {
             const requestId = `prefetch-${tc.id}`;
             const promise = new Promise<{ content: string; isError: boolean }>((resolve) => {
-              pendingToolExecutions.set(requestId, { resolve });
+              pendingToolExecutions.set(requestId, { resolve, toolName: tc.name, args: (tc.arguments ?? {}) as Record<string, unknown> });
             });
             send({
               type: 'tool_execute_request',
@@ -1220,6 +1685,13 @@ function handleSessionEvent(event: AgentSessionEvent): void {
   // Detect session MCP tool completions + enrich tool starts with canonical metadata
   if (event.type === 'tool_execution_start') {
     const toolName = event.toolName;
+    activeToolContext = {
+      toolName,
+      toolCallId: event.toolCallId,
+      sourceLayer: activeToolContext?.sourceLayer,
+      requestId: activeToolContext?.requestId,
+      args: (event.args ?? {}) as Record<string, unknown>,
+    };
     if (toolName.startsWith('session__') || toolName.startsWith('mcp__session__')) {
       const mcpToolName = toolName.replace(/^(mcp__session__|session__)/, '');
       pendingSessionToolCalls.set(event.toolCallId, {
@@ -1317,21 +1789,26 @@ function isContextOverflowErrorMessage(message: string): boolean {
 async function waitForCompaction(session: { isCompacting: boolean }, timeoutMs = 60_000): Promise<void> {
   if (!session.isCompacting) return;
   debugLog('Waiting for in-flight compaction to finish before prompt...');
+  logCompactionDebug(`wait-start timeoutMs=${timeoutMs} isCompacting=${session.isCompacting ? 1 : 0}`);
   const start = Date.now();
   while (session.isCompacting) {
     if (Date.now() - start > timeoutMs) {
       debugLog('Compaction wait timed out after 60s, proceeding anyway');
+      logCompactionDebug(`wait-timeout elapsedMs=${Date.now() - start}`);
       break;
     }
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   if (Date.now() - start < timeoutMs) {
     debugLog('Compaction finished, proceeding with prompt');
+    logCompactionDebug(`wait-finish elapsedMs=${Date.now() - start}`);
   }
 }
 
 async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): Promise<void> {
   currentUserMessage = msg.message;
+  currentPromptRequestId = `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  activeToolContext = null;
 
   try {
     // If proxy tools changed since last session creation, dispose and recreate.
@@ -1369,6 +1846,8 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
       images: msg.images && msg.images.length > 0 ? msg.images : undefined,
       streamingBehavior: 'followUp',
     });
+    currentPromptRequestId = null;
+    activeToolContext = null;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
 
@@ -1395,14 +1874,34 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
           code: 'prompt_overflow_recovery_failed',
         });
         send({ type: 'event', event: { type: 'agent_end' } });
+        currentPromptRequestId = null;
+        activeToolContext = null;
         return;
       }
     }
 
     debugLog(`Prompt failed: ${errorMsg}`);
+    if (isToolValidationFailureMessage(errorMsg)) {
+      activeToolContext = {
+        ...(activeToolContext ?? {}),
+        sourceLayer: 'sdk-ajv',
+      };
+      logToolValidationFailure(formatFailureContext(
+        {
+          category: 'tool-validation',
+          sourceLayer: 'sdk-ajv',
+          message: errorMsg,
+        },
+        {
+          rawError: errorMsg,
+        },
+      ));
+    }
     send({ type: 'error', message: errorMsg, code: 'prompt_error' });
     // Send synthetic agent_end so the main process event queue unblocks
     send({ type: 'event', event: { type: 'agent_end' } });
+    currentPromptRequestId = null;
+    activeToolContext = null;
   }
 }
 
@@ -1447,6 +1946,12 @@ function handleToolExecuteResponse(msg: Extract<InboundMessage, { type: 'tool_ex
   const pending = pendingToolExecutions.get(msg.requestId);
   if (pending) {
     pendingToolExecutions.delete(msg.requestId);
+    activeToolContext = {
+      requestId: msg.requestId,
+      toolName: pending.toolName,
+      args: pending.args,
+      sourceLayer: activeToolContext?.sourceLayer,
+    };
     pending.resolve(msg.result);
   } else {
     debugLog(`No pending tool execution for requestId: ${msg.requestId}`);
