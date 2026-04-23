@@ -14,6 +14,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
@@ -80,6 +81,40 @@ import type { McpClientPool } from '../mcp/mcp-pool.ts';
 // Path utilities
 import { join } from 'path';
 import { homedir } from 'os';
+
+function isToolValidationFailureMessage(message: string): boolean {
+  return message.includes('Validation failed for tool "') && message.includes('Received arguments:');
+}
+
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function getElectronMainLogPath(): string {
+  return join(homedir(), 'Library/Logs/@crystal-agent/electron/main.log');
+}
+
+function persistMainProcessToolValidationFailure(message: string): void {
+  const line = `${new Date().toISOString()} [main-process] [tool-validation] ${message}\n`;
+  try {
+    const logPath = getElectronMainLogPath();
+    mkdirSync(join(logPath, '..'), { recursive: true });
+    appendFileSync(logPath, line, 'utf8');
+  } catch {
+    // Swallow logging failures to preserve original runtime behavior.
+  }
+}
+
+function formatMainProcessToolValidationContext(base: Record<string, string | number | undefined>, extraDebug?: Record<string, string | number | undefined>): string {
+  const fields: Array<[string, string | number | undefined]> = Object.entries(base);
+  if (process.env.CRAFT_DEBUG === '1' && extraDebug) {
+    fields.push(...Object.entries(extraDebug));
+  }
+  return fields
+    .filter(([, value]) => value !== undefined && value !== '')
+    .map(([key, value]) => `${key}=${JSON.stringify(String(value))}`)
+    .join(' ');
+}
 
 function normalizeSessionToolMetadataArgs(args: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...args };
@@ -1353,11 +1388,40 @@ export class PiAgent extends BaseAgent {
         result,
       });
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (isToolValidationFailureMessage(errorMessage)) {
+        const sessionId = this.config.session?.id || this._sessionId;
+        const toolCallId = typeof normalizedArgs.toolCallId === 'string'
+          ? normalizedArgs.toolCallId
+          : typeof normalizedArgs.tool_call_id === 'string'
+            ? normalizedArgs.tool_call_id
+            : undefined;
+        const toolNameFromMessage = errorMessage.match(/Validation failed for tool "([^"]+)"/)?.[1];
+        const promptSnippet = typeof this.currentUserMessage === 'string' && this.currentUserMessage.trim()
+          ? compactWhitespace(this.currentUserMessage).slice(0, 160)
+          : undefined;
+        persistMainProcessToolValidationFailure(formatMainProcessToolValidationContext(
+          {
+            sessionId,
+            requestId: request.requestId,
+            toolCallId,
+            toolName: toolNameFromMessage ?? request.toolName,
+            sourceLayer: 'main-process-tool-router',
+            category: 'tool-validation',
+            message: errorMessage,
+          },
+          {
+            arguments: JSON.stringify(normalizedArgs),
+            rawError: errorMessage,
+            promptSnippet,
+          },
+        ));
+      }
       this.send({
         type: 'tool_execute_response',
         requestId: request.requestId,
         result: {
-          content: error instanceof Error ? error.message : String(error),
+          content: errorMessage,
           isError: true,
         },
       });
