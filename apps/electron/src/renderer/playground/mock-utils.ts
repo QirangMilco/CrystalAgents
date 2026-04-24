@@ -27,6 +27,13 @@ export const mockElectronAPI = {
     return null
   },
 
+  getVariantPaths: async () => ({
+    configDirName: '.crystal-agent-playground',
+    workspaceDataDirName: '.crystal-agent-playground',
+    sourceConfigDirName: '.craft-agent',
+    defaultWorkspacesDir: '/Users/demo/.crystal-agent-playground/workspaces',
+  }),
+
   getTaskOutput: async (taskId: string) => {
     console.log('[Playground] getTaskOutput called:', taskId)
     return `Output for task ${taskId}:\n\nThis is a mock output in the playground.\nIn the real app, this would show the actual task output.`

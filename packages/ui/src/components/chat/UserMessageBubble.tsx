@@ -169,10 +169,10 @@ function InlineFileBadge({
   badge: ContentBadge
   onFileClick?: (path: string) => void
 }) {
-  // Strip .craft-agent workspace/session path prefix for cleaner tooltip display
-  // e.g. "/Users/.../workspaces/{id}/sessions/{id}/plans/foo.md" → "plans/foo.md"
+  // Strip config-dir/workspaces path prefix for cleaner tooltip display
+  // e.g. "/Users/.../<configDir>/workspaces/{id}/sessions/{id}/plans/foo.md" → "plans/foo.md"
   const rawPath = badge.filePath || badge.label
-  const tooltipPath = normalizePath(rawPath).replace(/^.*\.craft-agent\/workspaces\/[^/]+\/(sessions\/[^/]+\/)?/, '')
+  const tooltipPath = normalizePath(rawPath).replace(/^.*\/workspaces\/[^/]+\/(sessions\/[^/]+\/)?/, '')
   const isClickable = !!badge.filePath && !!onFileClick
 
   const badgeContent = (

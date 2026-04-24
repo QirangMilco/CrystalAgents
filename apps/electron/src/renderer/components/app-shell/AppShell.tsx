@@ -992,6 +992,7 @@ function AppShellContent({
 
   // Skills state (workspace-scoped)
   const [skills, setSkills] = React.useState<LoadedSkill[]>([])
+  const [workspaceDataDirName, setWorkspaceDataDirName] = React.useState('.craft-agents')
   // Sync skills to atom for NavigationContext auto-selection
   const setSkillsAtom = useSetAtom(skillsAtom)
   React.useEffect(() => {
@@ -1000,12 +1001,20 @@ function AppShellContent({
   // Automations — state, handlers, loading, subscriptions
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
 
+  React.useEffect(() => {
+    window.electronAPI.getVariantPaths()
+      .then((paths) => {
+        setWorkspaceDataDirName(paths.workspaceDataDirName)
+      })
+      .catch(() => {})
+  }, [])
+
   const buildDefaultWorkspaceImportPath = React.useCallback(() => {
     const rootPath = activeWorkspace?.rootPath
-    if (!rootPath) return '.craft-agent'
+    if (!rootPath) return workspaceDataDirName
     const normalized = rootPath.replace(/[\\/]$/, '')
-    return `${normalized}/.craft-agent`
-  }, [activeWorkspace?.rootPath])
+    return `${normalized}/${workspaceDataDirName}`
+  }, [activeWorkspace?.rootPath, workspaceDataDirName])
 
   const resetWorkspaceImportDialog = React.useCallback(() => {
     setWorkspaceImportDialogPhase('preview')
@@ -3853,7 +3862,7 @@ function AppShellContent({
             align="start"
             secondaryAction={{
               label: 'Edit File',
-              filePath: `${activeWorkspace.rootPath}/.craft-agents/views.json`,
+              filePath: `${activeWorkspace.rootPath}/${workspaceDataDirName}/views.json`,
             }}
             {...getEditConfig('edit-views', activeWorkspace.rootPath)}
           />

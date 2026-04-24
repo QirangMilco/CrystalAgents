@@ -354,6 +354,12 @@ export interface ElectronAPI {
   /** Returns the renderer host environment without going through RPC. */
   getRuntimeEnvironment(): 'electron' | 'web'
   getHomeDir(): Promise<string>
+  getVariantPaths(): Promise<{
+    configDirName: string
+    workspaceDataDirName: string
+    sourceConfigDirName: string
+    defaultWorkspacesDir: string
+  }>
   isDebugMode(): Promise<boolean>
 
   // Transport connection status (preload-local, not RPC channels)

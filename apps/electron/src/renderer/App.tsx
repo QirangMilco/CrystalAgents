@@ -71,6 +71,13 @@ import { toast } from 'sonner'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'workspace-picker' | 'ready'
 
+const startupPathDebugEnabled = (window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_STARTUP_PATHS === '1'
+
+function startupPathDebug(label: string, payload?: unknown): void {
+  if (!startupPathDebugEnabled) return
+  void Promise.resolve(window.electronAPI.debugLog(label, payload)).catch(() => {})
+}
+
 /** Type for the Jotai store returned by useStore() */
 type JotaiStore = ReturnType<typeof getDefaultStore>
 
@@ -578,27 +585,44 @@ export default function App() {
   useEffect(() => {
     const initialize = async () => {
       try {
+        startupPathDebug('[startup-paths] initialize:start', {
+          search: window.location.search,
+          href: window.location.href,
+        })
+
         // Get this window's workspace ID (passed via URL query param from main process)
         const wsId = await window.electronAPI.getWindowWorkspace()
+        startupPathDebug('[startup-paths] getWindowWorkspace:resolved', { wsId })
         setWindowWorkspaceId(wsId)
 
         const needs = await window.electronAPI.getSetupNeeds()
+        startupPathDebug('[startup-paths] getSetupNeeds:resolved', {
+          isFullyConfigured: needs.isFullyConfigured,
+          hasAnyCredentials: (needs as { hasAnyCredentials?: boolean }).hasAnyCredentials,
+          needsOnboarding: (needs as { needsOnboarding?: boolean }).needsOnboarding,
+        })
         setSetupNeeds(needs)
 
         if (needs.isFullyConfigured) {
           // If no workspace is selected (thin client without CRAFT_WORKSPACE_ID),
           // show workspace picker before entering the main app
           if (!wsId) {
+            startupPathDebug('[startup-paths] appState:set', { next: 'workspace-picker', reason: 'no-workspace-id' })
             setAppState('workspace-picker')
           } else {
+            startupPathDebug('[startup-paths] appState:set', { next: 'ready', reason: 'workspace-resolved', wsId })
             setAppState('ready')
           }
         } else {
           // New user or needs setup - show onboarding
+          startupPathDebug('[startup-paths] appState:set', { next: 'onboarding', reason: 'setup-incomplete' })
           setAppState('onboarding')
         }
       } catch (error) {
         console.error('Failed to check auth state:', error)
+        startupPathDebug('[startup-paths] initialize:error', {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+        })
         // If check fails, show onboarding to be safe
         setAppState('onboarding')
       }
@@ -628,7 +652,20 @@ export default function App() {
   useEffect(() => {
     if (appState !== 'ready') return
 
-    window.electronAPI.getWorkspaces().then(setWorkspaces)
+    startupPathDebug('[startup-paths] ready-effect:start', { windowWorkspaceId })
+
+    window.electronAPI.getWorkspaces().then((ws) => {
+      startupPathDebug('[startup-paths] getWorkspaces:resolved', {
+        count: ws.length,
+        ids: ws.map((workspace) => workspace.id),
+        slugs: ws.map((workspace) => workspace.slug),
+      })
+      setWorkspaces(ws)
+    }).catch((error) => {
+      startupPathDebug('[startup-paths] getWorkspaces:error', {
+        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+      })
+    })
     window.electronAPI.getNotificationsEnabled().then(setNotificationsEnabled).catch(() => {})
 
     // Show actionable toast for missing system dependencies (Windows only)
@@ -645,19 +682,47 @@ export default function App() {
       }
     }).catch(() => { /* non-fatal startup check */ })
     void loadSessionsFromServer()
+      .then(() => {
+        startupPathDebug('[startup-paths] loadSessionsFromServer:resolved', { windowWorkspaceId })
+      })
+      .catch((error) => {
+        startupPathDebug('[startup-paths] loadSessionsFromServer:error', {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+        })
+      })
     // Load LLM connections with authentication status
     window.electronAPI.listLlmConnectionsWithStatus().then((connections) => {
+      startupPathDebug('[startup-paths] listLlmConnectionsWithStatus:resolved', {
+        count: connections.length,
+        slugs: connections.map((connection) => connection.slug),
+      })
       setLlmConnections(connections)
       setDefaultLlmConnectionSlug(resolveDefaultConnectionSlug(connections))
+    }).catch((error) => {
+      startupPathDebug('[startup-paths] listLlmConnectionsWithStatus:error', {
+        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+      })
     })
     // Load persisted input drafts into ref (no re-render needed)
     window.electronAPI.getAllDrafts().then((drafts) => {
+      startupPathDebug('[startup-paths] getAllDrafts:resolved', { count: Object.keys(drafts).length })
       if (Object.keys(drafts).length > 0) {
         sessionDraftsRef.current = new Map(Object.entries(drafts))
       }
+    }).catch((error) => {
+      startupPathDebug('[startup-paths] getAllDrafts:error', {
+        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+      })
     })
     // Load app-level theme
-    window.electronAPI.getAppTheme().then(setAppTheme)
+    window.electronAPI.getAppTheme().then((theme) => {
+      startupPathDebug('[startup-paths] getAppTheme:resolved', { hasTheme: !!theme })
+      setAppTheme(theme)
+    }).catch((error) => {
+      startupPathDebug('[startup-paths] getAppTheme:error', {
+        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+      })
+    })
   }, [appState, loadSessionsFromServer, resolveDefaultConnectionSlug])
 
   // Subscribe to theme change events (live updates when theme.json changes)

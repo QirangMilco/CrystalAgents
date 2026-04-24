@@ -20,14 +20,34 @@ function emitRendererCrashLog(label: string, payload: Record<string, unknown>): 
   void Promise.resolve(window.electronAPI.debugLog(label, safePayload)).catch(() => {})
 }
 
+const startupPathDebugEnabled = (window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_STARTUP_PATHS === '1'
+
+function emitStartupPathLog(label: string, payload: Record<string, unknown>): void {
+  if (!startupPathDebugEnabled) return
+  emitRendererCrashLog(label, payload)
+}
+
+emitStartupPathLog('[startup-paths] renderer-main:start', {
+  href: typeof window !== 'undefined' ? window.location.href : null,
+  readyState: typeof document !== 'undefined' ? document.readyState : null,
+})
+
 // Initialize i18n before any React rendering
 setupI18n([LanguageDetector, initReactI18next])
+
+emitStartupPathLog('[startup-paths] renderer-main:i18n-ready', {
+  resolvedLanguage: i18n.resolvedLanguage ?? null,
+  language: i18n.language ?? null,
+})
 
 // Sync persisted renderer language to the main process on startup.
 // Renderer uses browser localStorage detection; the main process does not,
 // so without this bootstrap sync the server-side i18n instance falls back to English.
 const startupLanguage = i18n.resolvedLanguage ?? i18n.language
 if (startupLanguage) {
+  emitStartupPathLog('[startup-paths] renderer-main:changeLanguage', {
+    startupLanguage,
+  })
   void window.electronAPI?.changeLanguage?.(startupLanguage)
 }
 
@@ -151,6 +171,10 @@ if (typeof window !== 'undefined') {
     })
   })
 }
+
+emitStartupPathLog('[startup-paths] renderer-main:before-render', {
+  hasRoot: !!document.getElementById('root'),
+})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

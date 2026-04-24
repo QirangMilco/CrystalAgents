@@ -1561,13 +1561,16 @@ export class SessionManager implements ISessionManager {
       // Set up authentication environment variables (critical for SDK to work)
       await this.reinitializeAuth()
 
-      // Eagerly activate ConfigWatcher + AutomationSystem for every workspace so
-      // the scheduler and event handlers start at boot — not lazily on first
-      // client connect. This is critical for headless servers where no UI may
-      // ever connect, yet scheduled/event-driven automations must still fire.
-      const workspaces = getWorkspaces()
-      for (const workspace of workspaces) {
-        this.setupConfigWatcher(workspace.rootPath, workspace.id)
+      // Eagerly activate ConfigWatcher + AutomationSystem only in headless mode.
+      // In GUI mode this can recursively watch every historical workspace at boot,
+      // including large repositories, which blocks app initialization and leaves
+      // the splash screen spinning. GUI windows already initialize watchers on
+      // demand via GET_WORKSPACE / SWITCH_WORKSPACE handlers.
+      if (process.env.CRAFT_HEADLESS) {
+        const workspaces = getWorkspaces()
+        for (const workspace of workspaces) {
+          this.setupConfigWatcher(workspace.rootPath, workspace.id)
+        }
       }
 
       // Load existing sessions from disk

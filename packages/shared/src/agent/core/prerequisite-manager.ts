@@ -11,8 +11,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
+import { getDocPath } from '../../docs/index.ts';
 import { expandPath } from './path-processor.ts';
 import { isBrowserToolNameOrAlias } from '../browser-tool-names.ts';
 
@@ -49,7 +49,7 @@ export interface PrerequisiteManagerConfig {
 const EXEMPT_SLUGS = new Set(['session', 'craft-agents-docs']);
 
 /** Global browser tools docs path required before browser tool usage. */
-const BROWSER_TOOLS_DOC_PATH = resolve(join(homedir(), '.craft-agent', 'docs', 'browser-tools.md'));
+const BROWSER_TOOLS_DOC_PATH = resolve(getDocPath('browser-tools.md'));
 
 // ============================================================
 // Rules

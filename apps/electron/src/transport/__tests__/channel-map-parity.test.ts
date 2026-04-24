@@ -25,6 +25,7 @@ type ApiToChannelMapKeys = Exclude<
   | 'removeWorkspace' // direct IPC to main process — modifies local config
   | 'invokeOnServer' // direct IPC to main process — cross-server RPC
   | 'detectOfficialImportSource' // direct IPC to main process — manual import source detection
+  | 'getVariantPaths' // direct IPC to main process — variant-backed path metadata for renderer
   | 'importOfficialData' // direct IPC to main process — manual import execution
   | 'transferSessionToWorkspace' // direct IPC to main process — orchestrated remote transfer
   | 'onTransferProgress' // direct IPC listener — chunk upload progress

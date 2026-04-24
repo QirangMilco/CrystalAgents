@@ -177,6 +177,7 @@ if (isDebugMode) {
     CRAFT_DEBUG_TOOL_TITLES: process.env.CRAFT_DEBUG_TOOL_TITLES ?? 'unset',
     CRAFT_DEBUG_STREAMING_STEPS: process.env.CRAFT_DEBUG_STREAMING_STEPS ?? 'unset',
     CRAFT_DEBUG_TOOL_ARGS: process.env.CRAFT_DEBUG_TOOL_ARGS ?? 'unset',
+    CRAFT_DEBUG_STARTUP_PATHS: process.env.CRAFT_DEBUG_STARTUP_PATHS ?? 'unset',
   })
 }
 
@@ -874,6 +875,16 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('app:detectOfficialImportSource', async (_event, sourcePath?: string) => {
       return detectOfficialConfigSource(sourcePath)
+    })
+
+    ipcMain.handle('app:getVariantPaths', async () => {
+      const variant = getAppVariant()
+      return {
+        configDirName: variant.configDirName,
+        workspaceDataDirName: variant.workspaceDataDirName,
+        sourceConfigDirName: variant.import.sourceConfigDirName,
+        defaultWorkspacesDir: getDefaultWorkspacesDir(),
+      }
     })
 
     ipcMain.handle(

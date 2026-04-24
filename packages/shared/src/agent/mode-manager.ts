@@ -1685,6 +1685,7 @@ export function looksLikePotentialWrite(command: string): boolean {
 export function getPathHint(targetPath: string, plansFolderPath: string, dataFolderPath?: string): string | null {
   const normalizedTarget = targetPath.replace(/\\/g, '/').toLowerCase();
   const normalizedPlans = plansFolderPath.replace(/\\/g, '/').toLowerCase();
+  const workspaceRootPrefix = normalizedPlans.split('/sessions/')[0];
 
   // Case: Writing to session folder but missing /plans/ or /data/
   if (normalizedTarget.includes('/sessions/') && !normalizedTarget.includes('/plans/') && !normalizedTarget.includes('/data/')) {
@@ -1701,12 +1702,12 @@ export function getPathHint(targetPath: string, plansFolderPath: string, dataFol
   }
 
   // Case: Writing to workspace root instead of session
-  if (normalizedTarget.includes('/.craft-agent/workspaces/') && !normalizedTarget.includes('/sessions/')) {
+  if (workspaceRootPrefix && normalizedTarget.startsWith(`${workspaceRootPrefix}/`) && !normalizedTarget.includes('/sessions/')) {
     return 'Hint: Write to the session plans or data folder, not the workspace root.';
   }
 
-  // Case: Writing outside .craft-agent entirely
-  if (!normalizedTarget.includes('/.craft-agent/')) {
+  // Case: Writing outside the current workspace/session path entirely
+  if (workspaceRootPrefix && !normalizedTarget.startsWith(`${workspaceRootPrefix}/`) && normalizedTarget !== workspaceRootPrefix) {
     return 'Hint: Files must be written to the session plans or data folder. Use plansFolderPath or dataFolderPath from <session_state>.';
   }
 

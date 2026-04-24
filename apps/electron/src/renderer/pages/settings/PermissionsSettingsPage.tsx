@@ -2,11 +2,10 @@
  * PermissionsSettingsPage
  *
  * Displays permissions configuration for Explore mode.
- * Shows both default patterns (from ~/.craft-agent/permissions/default.json)
- * and custom workspace additions (from workspace permissions.json).
+ * Shows both app-level default patterns and custom workspace additions.
  *
- * Default patterns can be edited by the user in ~/.craft-agent/permissions/default.json.
- * Custom patterns can be edited via workspace permissions.json file.
+ * Default patterns can be edited in the app-level permissions file.
+ * Custom patterns can be edited via the workspace permissions file.
  */
 
 import * as React from 'react'
@@ -37,7 +36,7 @@ export const meta: DetailsPageMeta = {
 }
 
 /**
- * Build default permissions data from ~/.craft-agent/permissions/default.json.
+ * Build default permissions data from the app-level default permissions file.
  * These are the Explore mode patterns that can be customized by the user.
  * Patterns can include comments which are displayed in the table.
  *
@@ -140,8 +139,9 @@ export default function PermissionsSettingsPage() {
   const [defaultConfig, setDefaultConfig] = useState<PermissionsConfigFile | null>(null)
   const [defaultPermissionsPath, setDefaultPermissionsPath] = useState<string | null>(null)
   const [customConfig, setCustomConfig] = useState<PermissionsConfigFile | null>(null)
+  const [workspaceDataDirName, setWorkspaceDataDirName] = useState('.craft-agents')
 
-  // Build default permissions data from ~/.craft-agent/permissions/default.json
+  // Build default permissions data from the app-level default permissions file
   const defaultPermissionsData = useMemo(() => buildDefaultPermissionsData(defaultConfig), [defaultConfig])
 
   // Fallback labels for custom permissions (translated)
@@ -158,6 +158,12 @@ export default function PermissionsSettingsPage() {
     if (!customConfig) return []
     return buildCustomPermissionsData(customConfig, permissionFallbackLabels)
   }, [customConfig, permissionFallbackLabels])
+
+  useEffect(() => {
+    window.electronAPI.getVariantPaths()
+      .then((paths) => setWorkspaceDataDirName(paths.workspaceDataDirName))
+      .catch(() => {})
+  }, [])
 
   // Load both default and workspace permissions configs
   useEffect(() => {
@@ -292,7 +298,7 @@ export default function PermissionsSettingsPage() {
                             displayLabel={displayLabel}
                             secondaryAction={activeWorkspace ? {
                               label: t("common.editFile"),
-                              filePath: `${activeWorkspace.rootPath}/.craft-agents/permissions.json`,
+                              filePath: `${activeWorkspace.rootPath}/${workspaceDataDirName}/permissions.json`,
                             } : undefined}
                           />
                         )

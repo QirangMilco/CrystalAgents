@@ -122,6 +122,7 @@ export default function PreferencesPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [preferencesPath, setPreferencesPath] = useState<string | null>(null)
 
   // Deep compare for dirty state
   const isDirty = JSON.stringify(formState) !== JSON.stringify(originalState)
@@ -130,10 +131,15 @@ export default function PreferencesPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const result = await window.electronAPI.readPreferences()
+        const [result, homeDir, variantPaths] = await Promise.all([
+          window.electronAPI.readPreferences(),
+          window.electronAPI.getHomeDir(),
+          window.electronAPI.getVariantPaths(),
+        ])
         const parsed = parsePreferences(result.content)
         setFormState(parsed)
         setOriginalState(parsed)
+        setPreferencesPath(`${homeDir}/${variantPaths.configDirName}/preferences.json`)
       } catch (err) {
         console.error('Failed to load stored user preferences:', err)
         setFormState(emptyFormState)
@@ -187,9 +193,10 @@ export default function PreferencesPage() {
   const headerActions = (
     <div className="flex items-center gap-1.5">
       <button
-        onClick={() => window.electronAPI.showInFolder('~/.craft-agent/preferences.json')}
+        onClick={() => preferencesPath && window.electronAPI.showInFolder(preferencesPath)}
         className="flex items-center gap-1 text-xs h-7 px-2 rounded-md bg-foreground/5 hover:bg-foreground/10 text-muted-foreground"
         title={`Show in ${getFileManagerName()}`}
+        disabled={!preferencesPath}
       >
         <ExternalLink className="h-3 w-3" />
       </button>

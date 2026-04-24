@@ -11,6 +11,8 @@
  * - Provide helpful error messages for malformed configs
  */
 
+import { CONFIG_DIR } from '../../config/paths.ts';
+import { WORKSPACE_DATA_DIR } from '../../workspaces/data-path.ts';
 import type { ConfigValidationResult, ConfigFileType, ConfigValidatorConfig } from './types.ts';
 
 /**
@@ -29,24 +31,29 @@ const CONFIG_FILE_PATTERNS: { pattern: RegExp; type: ConfigFileType }[] = [
 /**
  * Craft Agent specific config files that have known schemas.
  */
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const NORMALIZED_CONFIG_DIR = CONFIG_DIR.replace(/\\/g, '/').replace(/\/$/, '');
+const ESCAPED_CONFIG_DIR = escapeRegex(NORMALIZED_CONFIG_DIR);
+const ESCAPED_WORKSPACE_DATA_DIR = escapeRegex(WORKSPACE_DATA_DIR);
+
 const CRAFT_AGENT_CONFIG_PATTERNS = [
   // Main config
-  /\.craft-agent\/config\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/config\\.json$`),
   // Preferences
-  /\.craft-agent\/preferences\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/preferences\\.json$`),
   // Source configs
-  /\.craft-agent\/workspaces\/[^/]+\/sources\/[^/]+\/config\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/sources/[^/]+/config\\.json$`),
   // Permissions
-  /\.craft-agent\/workspaces\/[^/]+\/permissions\.json$/,
-  /\.craft-agent\/permissions\/[^/]+\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/permissions\\.json$`),
+  new RegExp(`${ESCAPED_CONFIG_DIR}/permissions/[^/]+\\.json$`),
   // Theme
-  /\.craft-agent\/workspaces\/[^/]+\/theme\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/theme\\.json$`),
   // Statuses
-  /\.craft-agent\/workspaces\/[^/]+\/statuses\/config\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/statuses/config\\.json$`),
   // Labels
-  /\.craft-agent\/workspaces\/[^/]+\/labels\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/labels/config\\.json$`),
   // Tool icons
-  /\.craft-agent\/tool-icons\/tool-icons\.json$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/tool-icons/tool-icons\\.json$`),
 ];
 
 /**

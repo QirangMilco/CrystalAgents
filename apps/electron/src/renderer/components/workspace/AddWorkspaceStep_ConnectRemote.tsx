@@ -69,7 +69,7 @@ export function AddWorkspaceStep_ConnectRemote({
   const isReconnectMode = !!reconnectWorkspace
   const [serverUrl, setServerUrl] = useState(initialUrl ?? '')
   const [token, setToken] = useState(initialToken ?? '')
-  const [homeDir, setHomeDir] = useState('')
+  const [defaultBasePath, setDefaultBasePath] = useState<string | null>(null)
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
   const [remoteWorkspaces, setRemoteWorkspaces] = useState<Array<{ id: string; name: string }>>([])
@@ -79,7 +79,11 @@ export function AddWorkspaceStep_ConnectRemote({
   const selectPortalRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    window.electronAPI.getHomeDir().then(setHomeDir)
+    window.electronAPI.getVariantPaths().then((paths) => {
+      setDefaultBasePath(paths.defaultWorkspacesDir)
+    }).catch((err) => {
+      console.error('Failed to load variant paths:', err)
+    })
   }, [])
 
   const isCreateNew = selectedValue === CREATE_NEW_VALUE
@@ -146,8 +150,7 @@ export function AddWorkspaceStep_ConnectRemote({
       }
     }
 
-    if (!homeDir) return
-    const defaultBasePath = `${homeDir}/.craft-agent/workspaces`
+    if (!defaultBasePath) return
 
     if (isCreateNew || isFreshServer) {
       // Create new workspace on remote server via direct RPC, then connect locally
@@ -173,7 +176,7 @@ export function AddWorkspaceStep_ConnectRemote({
       const finalPath = path || `${defaultBasePath}/${slug}`
       await onCreate(finalPath, selectedWorkspace.name, { url: serverUrl, token, remoteWorkspaceId: selectedWorkspace.id })
     }
-  }, [serverUrl, token, homeDir, isCreateNew, isFreshServer, newWorkspaceName, selectedWorkspace, onCreate, isReconnectMode, onUpdate, reconnectWorkspace])
+  }, [serverUrl, token, defaultBasePath, isCreateNew, isFreshServer, newWorkspaceName, selectedWorkspace, onCreate, isReconnectMode, onUpdate, reconnectWorkspace])
 
   const canConnect = testState === 'ok' && !isCreating && (
     isReconnectMode ? true :

@@ -13,6 +13,8 @@
 
 import { homedir } from 'os';
 import { resolve, isAbsolute, normalize as normalizePosix, basename, dirname } from 'path';
+import { CONFIG_DIR } from '../../config/paths.ts';
+import { WORKSPACE_DATA_DIR } from '../../workspaces/data-path.ts';
 import {
   expandPath,
   normalizePath,
@@ -29,12 +31,19 @@ export { expandPath, normalizePath, pathStartsWith, toPortablePath };
  * Known configuration file patterns that may need validation before writing.
  * These files have specific formats (JSON, TOML, YAML) that can break apps if malformed.
  */
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const NORMALIZED_CONFIG_DIR = CONFIG_DIR.replace(/\\/g, '/').replace(/\/$/, '');
+const ESCAPED_CONFIG_DIR = escapeRegex(NORMALIZED_CONFIG_DIR);
+const ESCAPED_WORKSPACE_DATA_DIR = escapeRegex(WORKSPACE_DATA_DIR);
+
 const CONFIG_FILE_PATTERNS = [
   // Craft Agent configs
-  /\.craft-agent\/.*\/(config|permissions|theme|guide|labels|statuses)\.json$/,
-  /\.craft-agent\/config\.json$/,
-  /\.craft-agent\/preferences\.json$/,
-  /\.craft-agent\/.*\/SKILL\.md$/,
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/.*\\/(config|permissions|theme|guide)\\.json$`),
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/labels/config\\.json$`),
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/statuses/config\\.json$`),
+  new RegExp(`${ESCAPED_CONFIG_DIR}/config\\.json$`),
+  new RegExp(`${ESCAPED_CONFIG_DIR}/preferences\\.json$`),
+  new RegExp(`${ESCAPED_CONFIG_DIR}/workspaces/[^/]+/${ESCAPED_WORKSPACE_DATA_DIR}/.*\/SKILL\\.md$`),
   // Common config files
   /package\.json$/,
   /tsconfig\.json$/,

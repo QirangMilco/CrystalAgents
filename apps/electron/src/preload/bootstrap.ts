@@ -185,6 +185,7 @@ const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailabl
 const rendererEnv = Object.freeze({
   CRAFT_DEBUG_STREAMING_STEPS: process.env.CRAFT_DEBUG_STREAMING_STEPS,
   CRAFT_DEBUG_TOOL_TITLES: process.env.CRAFT_DEBUG_TOOL_TITLES,
+  CRAFT_DEBUG_STARTUP_PATHS: process.env.CRAFT_DEBUG_STARTUP_PATHS,
   NODE_ENV: process.env.NODE_ENV,
 })
 
@@ -426,6 +427,9 @@ client.onConnectionStateChanged((state) => {
 
 ;(api as ElectronAPI).importOfficialData = (payload?: { sourcePath?: string; includeEntries?: string[] }) =>
   ipcRenderer.invoke('app:importOfficialData', payload)
+
+;(api as ElectronAPI).getVariantPaths = () =>
+  ipcRenderer.invoke('app:getVariantPaths')
 
 // System warnings — expose env-based flags set during main process startup
 // (preload-only: reads env var directly, no IPC round-trip needed)

@@ -216,12 +216,13 @@ export default function AppearanceSettingsPage() {
     const load = async () => {
       if (!window.electronAPI) return
       try {
-        const [mappings, homeDir] = await Promise.all([
+        const [mappings, homeDir, variantPaths] = await Promise.all([
           window.electronAPI.getToolIconMappings(),
           window.electronAPI.getHomeDir(),
+          window.electronAPI.getVariantPaths(),
         ])
         setToolIcons(mappings)
-        setToolIconsJsonPath(`${homeDir}/.craft-agent/tool-icons/tool-icons.json`)
+        setToolIconsJsonPath(`${homeDir}/${variantPaths.configDirName}/tool-icons/tool-icons.json`)
       } catch (error) {
         console.error('Failed to load tool icon mappings:', error)
       }
