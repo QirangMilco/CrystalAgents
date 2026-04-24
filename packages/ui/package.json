@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@craft-agent/core": "workspace:*",
+    "@craft-agent/shared": "workspace:*",
     "@paper-design/shaders-react": "^0.0.69",
     "@tiptap/core": "^3.14.0",
     "@tiptap/pm": "^3.14.0",
@@ -28,6 +29,8 @@
     "fflate": "^0.8.2",
     "i18next": "^26.0.0",
     "nice-ticks": "^1.0.2",
+    "pdfjs-dist": "^5.4.0",
+    "react-pdf": "^10.3.0",
     "unified": "^11.0.0",
     "unist-util-visit": "^5.0.0"
   },
