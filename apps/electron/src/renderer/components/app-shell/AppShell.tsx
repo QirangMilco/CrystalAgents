@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import { useTranslation, Trans } from "react-i18next"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
 import { useAtomValue, useStore } from "jotai"
 import { motion, AnimatePresence } from "motion/react"
@@ -130,6 +130,7 @@ import { useAutomations } from "@/hooks/useAutomations"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { PanelHeader } from "./PanelHeader"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
+import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
 import { EditPopover, getEditConfig, type EditContextKey } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import {
@@ -295,6 +296,7 @@ function FilterModeSubMenuItems({
   onChangeMode: (mode: FilterMode) => void
   onRemove: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <>
       <StyledDropdownMenuItem
@@ -302,21 +304,21 @@ function FilterModeSubMenuItems({
         className={cn(mode === 'include' && "bg-foreground/[0.03]")}
       >
         <Check className="h-3.5 w-3.5 shrink-0" />
-        <span className="flex-1">Include</span>
+        <span className="flex-1">{t("filter.include")}</span>
       </StyledDropdownMenuItem>
       <StyledDropdownMenuItem
         onClick={(e) => { e.preventDefault(); onChangeMode('exclude') }}
         className={cn(mode === 'exclude' && "bg-foreground/[0.03]")}
       >
         <X className="h-3.5 w-3.5 shrink-0" />
-        <span className="flex-1">Exclude</span>
+        <span className="flex-1">{t("filter.exclude")}</span>
       </StyledDropdownMenuItem>
       <StyledDropdownMenuSeparator />
       <StyledDropdownMenuItem
         onClick={(e) => { e.preventDefault(); onRemove() }}
       >
         <Trash2 className="h-3.5 w-3.5 shrink-0" />
-        <span className="flex-1">Clear</span>
+        <span className="flex-1">{t("common.clear")}</span>
       </StyledDropdownMenuItem>
     </>
   )
@@ -992,7 +994,7 @@ function AppShellContent({
 
   // Skills state (workspace-scoped)
   const [skills, setSkills] = React.useState<LoadedSkill[]>([])
-  const [workspaceDataDirName, setWorkspaceDataDirName] = React.useState('.craft-agents')
+  const [workspaceDataDirName, setWorkspaceDataDirName] = React.useState('')
   // Sync skills to atom for NavigationContext auto-selection
   const setSkillsAtom = useSetAtom(skillsAtom)
   React.useEffect(() => {
@@ -3311,7 +3313,7 @@ function AppShellContent({
                               <StyledDropdownMenuSubContent minWidth="min-w-[180px]">
                                 {labelConfigs.length === 0 ? (
                                   <StyledDropdownMenuItem disabled>
-                                    <span className="text-muted-foreground">No labels configured</span>
+                                    <span className="text-muted-foreground">{t("table.noLabelsConfigured")}</span>
                                   </StyledDropdownMenuItem>
                                 ) : (
                                   <FilterLabelItems
@@ -3970,14 +3972,18 @@ function AppShellContent({
       <Dialog open={!!automationPendingDelete} onOpenChange={(open) => { if (!open) setAutomationPendingDelete(null) }}>
         <DialogContent showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>Delete Automation</DialogTitle>
+            <DialogTitle>{t("dialog.deleteAutomation.title")}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <strong>{pendingDeleteAutomation?.name}</strong>? This will remove the automation from your automations.json configuration.
+              <Trans
+                i18nKey="dialog.deleteAutomation.description"
+                values={{ name: pendingDeleteAutomation?.name }}
+                components={{ strong: <strong /> }}
+              />
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAutomationPendingDelete(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={confirmDeleteAutomation}>Delete</Button>
+            <Button variant="outline" onClick={() => setAutomationPendingDelete(null)}>{t("common.cancel")}</Button>
+            <Button variant="destructive" onClick={confirmDeleteAutomation}>{t("common.delete")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -4120,6 +4126,10 @@ function AppShellContent({
         activeWorkspaceId={activeWorkspaceId}
         onTransferComplete={handleTransferComplete}
       />
+
+      {/* Messaging dialogs (pairing-code + WA connect) — driven by messagingDialogAtom.
+          Mounted here so they survive context-menu / dropdown close. */}
+      <MessagingDialogHost />
 
     </AppShellProvider>
   )

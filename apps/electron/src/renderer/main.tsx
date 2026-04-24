@@ -71,7 +71,7 @@ const IGNORED_CONSOLE_PATTERNS = [
 // NOTE: Source map upload is intentionally disabled — see main/index.ts for details.
 sentryInit(
   {
-    integrations: [captureConsoleIntegration({ levels: ['error'] })],
+    integrations: [captureConsoleIntegration({ levels: ['error'] }) as any],
 
     beforeSend(event) {
       // Drop events matching known-harmless console patterns to avoid Sentry quota waste
@@ -104,7 +104,7 @@ sentryInit(
       return event
     },
   },
-  Sentry.init,
+  Sentry.init as any,
 )
 
 /**

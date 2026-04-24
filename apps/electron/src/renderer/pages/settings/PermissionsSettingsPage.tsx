@@ -139,7 +139,7 @@ export default function PermissionsSettingsPage() {
   const [defaultConfig, setDefaultConfig] = useState<PermissionsConfigFile | null>(null)
   const [defaultPermissionsPath, setDefaultPermissionsPath] = useState<string | null>(null)
   const [customConfig, setCustomConfig] = useState<PermissionsConfigFile | null>(null)
-  const [workspaceDataDirName, setWorkspaceDataDirName] = useState('.craft-agents')
+  const [workspaceDataDirName, setWorkspaceDataDirName] = useState('')
 
   // Build default permissions data from the app-level default permissions file
   const defaultPermissionsData = useMemo(() => buildDefaultPermissionsData(defaultConfig), [defaultConfig])

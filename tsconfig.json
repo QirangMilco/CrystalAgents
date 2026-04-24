@@ -1,14 +1,38 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/shared" },
-    { "path": "./packages/server-core" },
-    { "path": "./packages/server" },
-    { "path": "./packages/session-tools-core" },
-    { "path": "./packages/ui" },
-    { "path": "./apps/electron" },
-    { "path": "./apps/viewer" },
-    { "path": "./apps/webui" }
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/shared"
+    },
+    {
+      "path": "./packages/messaging-whatsapp-worker"
+    },
+    {
+      "path": "./packages/messaging-gateway"
+    },
+    {
+      "path": "./packages/server-core"
+    },
+    {
+      "path": "./packages/server"
+    },
+    {
+      "path": "./packages/session-tools-core"
+    },
+    {
+      "path": "./packages/ui"
+    },
+    {
+      "path": "./apps/electron"
+    },
+    {
+      "path": "./apps/viewer"
+    },
+    {
+      "path": "./apps/webui"
+    }
   ]
 }

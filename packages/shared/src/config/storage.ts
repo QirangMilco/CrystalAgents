@@ -45,6 +45,7 @@ import type { LlmConnection } from './llm-connections.ts';
 import { isValidProviderAuthCombination, getDefaultModelsForConnection, getDefaultModelForConnection, isPiProvider, toBedrockNativeId, type LlmProviderType } from './llm-connections.ts';
 import {
   getModelProvider,
+  getModelById,
 } from './models.ts';
 
 // Config stored in JSON file (credentials stored in encrypted file, not here)
@@ -75,7 +76,7 @@ export interface StoredConfig {
   browserToolEnabled?: boolean;  // Enable built-in browser tool (default: true). Disable for Playwright/Puppeteer.
   // Prompt caching & context
   extendedPromptCache?: boolean;  // Use 1h prompt cache TTL instead of 5m (default: false)
-  enable1MContext?: boolean;  // Enable 1M context window for supported models (default: true)
+  enable1MContext?: boolean;  // Enable 1M context window for supported models (default: false — opt-in; requires Anthropic Tier 4+)
   // Network proxy
   networkProxy?: import('./types.ts').NetworkProxySettings;
   // Windows: path to Git Bash (bash.exe) for the SDK subprocess
@@ -84,6 +85,10 @@ export interface StoredConfig {
   setupDeferred?: boolean;
   // Server mode — embedded remote server settings
   serverConfig?: import('./server-config.ts').ServerConfig;
+  // One-shot migration markers. Used by migrations that should run at most
+  // once per user (e.g. restoring a previously-removed model to connection
+  // lists without re-adding it if the user later removes it deliberately).
+  migrationsApplied?: string[];
 }
 
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -477,11 +482,13 @@ export function setBrowserToolEnabled(enabled: boolean): void {
 /**
  * Get whether 1M context window is enabled.
  * When disabled, models use 200K context and the interceptor strips the context-1m beta header.
- * Defaults to true if not set.
+ * Defaults to false — the 1M beta requires Anthropic Tier 4+, and enabling it by default
+ * causes 400 "Invalid Request" for lower-tier API keys on large contexts (issue #567).
+ * Users opt in via AI Settings → Performance → Extended Context (1M).
  */
 export function getEnable1MContext(): boolean {
   const config = loadStoredConfig();
-  return config?.enable1MContext !== false;
+  return config?.enable1MContext === true;
 }
 
 /**
@@ -1690,6 +1697,74 @@ function migrateOpus45ToOpus46(config: StoredConfig): boolean {
   return changed;
 }
 
+// TODO(opus-4.6-sunset): delete this migration, its call site, its one-shot
+// marker ('opus-4-6-restored'), and the associated test when Opus 4.6 is
+// deprecated. This reverses the earlier forward migration Opus 4.6 → 4.7
+// that was removed in the same commit — users who were auto-migrated no
+// longer had 4.6 in their connection.models, so the picker wouldn't show it.
+/**
+ * Restore claude-opus-4-6 to direct Anthropic connections that were previously
+ * force-migrated to 4.7 and no longer list 4.6. Runs once per user (tracked via
+ * config.migrationsApplied). Never touches `defaultModel` — users keep whatever
+ * default they had, and can switch models themselves.
+ */
+function restoreOpus46ToAnthropicConnections(config: StoredConfig): boolean {
+  const OPUS_46_ID = 'claude-opus-4-6';
+  const OPUS_47_ID = 'claude-opus-4-7';
+  const MARKER = 'opus-4-6-restored';
+  const alreadyRan = config.migrationsApplied?.includes(MARKER) ?? false;
+
+  // Anthropic connection.models entries are stored as full ModelDefinition
+  // objects (via backfillAllConnectionModels). The model picker reads
+  // model.name and falls back to the raw ID for bare strings, so we must
+  // push the object form to render as "Opus 4.6".
+  const opus46Model = getModelById(OPUS_46_ID);
+  if (!opus46Model) {
+    // Defensive — 4.6 is registered in this same PR, should never happen.
+    if (!alreadyRan) {
+      config.migrationsApplied = [...(config.migrationsApplied ?? []), MARKER];
+      return true;
+    }
+    return false;
+  }
+
+  let changed = false;
+
+  for (const connection of config.llmConnections ?? []) {
+    if (connection.providerType !== 'anthropic') continue;
+    if (!Array.isArray(connection.models) || connection.models.length === 0) continue;
+
+    // Idempotent shape repair: normalize any bare-string 'claude-opus-4-6'
+    // entry to the ModelDefinition object form. Runs regardless of the
+    // one-shot marker because it's a display-shape fix, not a new entry.
+    for (let i = 0; i < connection.models.length; i++) {
+      const m = connection.models[i];
+      if (typeof m === 'string' && m === OPUS_46_ID) {
+        connection.models[i] = { ...opus46Model };
+        changed = true;
+      }
+    }
+
+    // One-shot restore: only append 4.6 on the first run for a given user.
+    // A deliberate removal after the marker is set should stick.
+    if (alreadyRan) continue;
+
+    const ids = connection.models.map(m => typeof m === 'string' ? m : m.id);
+    if (ids.includes(OPUS_47_ID) && !ids.includes(OPUS_46_ID)) {
+      connection.models.push({ ...opus46Model });
+      changed = true;
+    }
+  }
+
+  // Mark the migration as seen on the first run — even when no connection
+  // was eligible — so subsequent runs don't keep re-checking.
+  if (!alreadyRan) {
+    config.migrationsApplied = [...(config.migrationsApplied ?? []), MARKER];
+    return true;
+  }
+  return changed;
+}
+
 /**
  * Migrate Sonnet 4.5 to Sonnet 4.6 for direct Anthropic connections.
  * Same pattern as migrateOpus45ToOpus46 — updates stored model IDs and names.
@@ -1876,7 +1951,7 @@ function migrateLegacyProviderTypes(config: StoredConfig): boolean {
   return changed;
 }
 
-/** Normalize a pi/-prefixed model ID for Bedrock: pi/claude-opus-4-6 → pi/anthropic.claude-opus-4-6-v1 */
+/** Normalize a pi/-prefixed model ID for Bedrock: pi/claude-opus-4-7 → pi/anthropic.claude-opus-4-7-v1 */
 function normalizePiBedrockId(id: string): string {
   if (id.startsWith('pi/')) {
     const bare = id.slice(3);
@@ -2056,7 +2131,13 @@ export function migrateLegacyLlmConnectionsConfig(): void {
     }
     // Phase 1g: Migrate Sonnet 4.5 → Sonnet 4.6 in workspace default models
     migrateWorkspaceSonnet45ToSonnet46(config);
-    // Phase 1h: Migrate legacy provider types (bedrock/vertex/anthropic_compat → pi/pi_compat)
+    // Phase 1h: Restore Opus 4.6 to direct Anthropic connections that were
+    // previously force-migrated away from it (one-shot, guarded by marker).
+    // TODO(opus-4.6-sunset): drop this call and the function when 4.6 is deprecated.
+    if (restoreOpus46ToAnthropicConnections(config)) {
+      needsSave = true;
+    }
+    // Phase 1j: Migrate legacy provider types (bedrock/vertex/anthropic_compat → pi/pi_compat)
     if (migrateLegacyProviderTypes(config)) {
       needsSave = true;
     }

@@ -8,7 +8,7 @@ import {
   validateStoredBackendConnection,
 } from '@craft-agent/shared/agent/backend'
 import { getModelRefreshService } from '@craft-agent/server-core/model-fetchers'
-import { parseTestConnectionError, createBuiltInConnection, validateModelList, piAuthProviderDisplayName, validateSetupTestInput, setupTestRequiresApiKey } from '@craft-agent/server-core/domain'
+import { parseTestConnectionError, createBuiltInConnection, validateModelList, piAuthProviderDisplayName, validateSetupTestInput, setupTestRequiresApiKey, isLoopbackBaseUrl } from '@craft-agent/server-core/domain'
 import { getWorkspaceOrThrow, buildBackendHostRuntimeContext } from '@craft-agent/server-core/handlers'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
@@ -120,14 +120,26 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         updates.customEndpoint = normalizedCustomEndpoint
         // Route custom OpenAI/Anthropic-compatible endpoints through PiAgent.
         updates.providerType = 'pi_compat'
-        updates.authType = 'api_key_with_endpoint'
-        // Keep provider hint in lockstep with selected protocol toggle.
-        updates.piAuthProvider = normalizedCustomEndpoint.api === 'anthropic-messages' ? 'anthropic' : 'openai'
+        // Local loopback endpoints (Ollama, LM Studio) don't need API keys.
+        updates.authType = (isLoopbackBaseUrl(setup.baseUrl ?? undefined) && !setup.credential)
+          ? 'none'
+          : 'api_key_with_endpoint'
+        if (isLoopbackBaseUrl(setup.baseUrl ?? undefined)) {
+          // Local models use the OpenAI protocol but aren't "OpenAI".
+          // Leave piAuthProvider unset → generic icon in the selector.
+          updates.name = 'Local Model'
+          updates.piAuthProvider = undefined
+        } else {
+          // Remote custom endpoints: keep provider hint in lockstep with selected protocol toggle.
+          updates.piAuthProvider = normalizedCustomEndpoint.api === 'anthropic-messages' ? 'anthropic' : 'openai'
+        }
       } else if (setup.baseUrl !== undefined) {
         // Base URL was explicitly updated without custom protocol config.
         // Treat this as non-custom mode and clear stale custom endpoint metadata.
+        // Only downgrade existing connections — new ones already have the correct
+        // providerType from createBuiltInConnection().
         updates.customEndpoint = undefined
-        if (connection.providerType === 'pi_compat' && connection.authType !== 'oauth') {
+        if (connection.providerType === 'pi_compat' && connection.authType !== 'oauth' && !isNewConnection) {
           updates.providerType = 'pi'
           updates.authType = 'api_key'
         }
@@ -317,26 +329,33 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     const hint = resolveSetupTestConnectionHint({ provider, baseUrl, piAuthProvider, customEndpoint })
     deps.platform.logger?.info(`[testLlmConnectionSetup] Testing: provider=${provider}${piAuthProvider ? ` piAuth=${piAuthProvider}` : ''}${baseUrl ? ` baseUrl=${baseUrl}` : ''} hasCustomEndpoint=${!!customEndpoint} hintProvider=${hint.providerType}`)
 
+    const startedAt = Date.now()
     try {
       const testModel = model || getDefaultModelForConnection(provider, piAuthProvider)
+      deps.platform.logger?.info(`[testLlmConnectionSetup] Resolved model: ${testModel}`)
       const result = await testBackendConnection({
         provider,
         apiKey: trimmedKey,
         allowEmptyApiKey,
         model: testModel,
         baseUrl,
-        timeoutMs: 20000,
+        timeoutMs: 45000,
         hostRuntime: buildBackendHostRuntimeContext(deps.platform),
         connection: hint,
       })
+      const elapsed = Date.now() - startedAt
 
       if (!result.success) {
+        deps.platform.logger?.info(`[testLlmConnectionSetup] Elapsed: ${elapsed}ms, success=false`)
+        deps.platform.logger?.info(`[testLlmConnectionSetup] Raw error: ${(result.error || '').slice(0, 1000)}`)
         return { success: false, error: parseTestConnectionError(result.error || 'Unknown error') }
       }
+      deps.platform.logger?.info(`[testLlmConnectionSetup] Elapsed: ${elapsed}ms, success=true`)
       return { success: true }
     } catch (error) {
+      const elapsed = Date.now() - startedAt
       const msg = error instanceof Error ? error.message : String(error)
-      deps.platform.logger?.info(`[testLlmConnectionSetup] Error: ${msg.slice(0, 500)}`)
+      deps.platform.logger?.info(`[testLlmConnectionSetup] Elapsed: ${elapsed}ms, threw: ${msg.slice(0, 1000)}`)
       return { success: false, error: parseTestConnectionError(msg) }
     }
   })

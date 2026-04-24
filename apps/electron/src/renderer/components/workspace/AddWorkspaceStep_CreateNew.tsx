@@ -116,7 +116,7 @@ export function AddWorkspaceStep_CreateNew({
         )}
       >
         <ArrowLeft className="h-4 w-4" />
-        Back
+        {t("common.back")}
       </button>
 
       <AddWorkspaceStepHeader
@@ -128,7 +128,7 @@ export function AddWorkspaceStep_CreateNew({
         {/* Workspace name */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-foreground mb-2.5">
-            Workspace name
+            {t("workspace.nameLabel")}
           </label>
           <div className="bg-background shadow-minimal rounded-lg">
             <Input
@@ -148,7 +148,7 @@ export function AddWorkspaceStep_CreateNew({
         {/* Location selection */}
         <div className="space-y-3">
           <label className="block text-sm font-medium text-foreground mb-2.5">
-            Location
+            {t("workspace.locationLabel")}
           </label>
 
           {/* Default location option */}
@@ -177,7 +177,7 @@ export function AddWorkspaceStep_CreateNew({
                 }}
                 disabled={isCreating}
               >
-                Browse
+                {t("common.browse")}
               </AddWorkspaceSecondaryButton>
             ) : undefined}
           />
@@ -188,9 +188,9 @@ export function AddWorkspaceStep_CreateNew({
           onClick={handleCreate}
           disabled={!canCreate}
           loading={isCreating}
-          loadingText="Creating..."
+          loadingText={t("workspace.creating")}
         >
-          Create
+          {t("common.create")}
         </AddWorkspacePrimaryButton>
       </div>
       <ServerDirectoryBrowser

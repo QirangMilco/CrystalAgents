@@ -6,7 +6,7 @@ describe('resolveClaudeThinkingOptions', () => {
   it('uses adaptive thinking for true Anthropic backends', () => {
     const result = resolveClaudeThinkingOptions({
       thinkingLevel: 'medium',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       providerType: 'anthropic',
       minimizeThinking: false,
     })
@@ -67,5 +67,43 @@ describe('resolveClaudeThinkingOptions', () => {
     expect(result).toEqual({
       thinking: { type: 'disabled' },
     })
+  })
+
+  it('maps xhigh to max effort on adaptive backends', () => {
+    const result = resolveClaudeThinkingOptions({
+      thinkingLevel: 'xhigh',
+      model: 'claude-opus-4-7',
+      providerType: 'anthropic',
+      minimizeThinking: false,
+    })
+
+    expect(result).toEqual({
+      thinking: { type: 'adaptive' },
+      effort: 'max',
+    })
+  })
+
+  it('uses xhigh token budget on Haiku (non-adaptive)', () => {
+    const result = resolveClaudeThinkingOptions({
+      thinkingLevel: 'xhigh',
+      model: 'claude-haiku-4-5-20251001',
+      providerType: 'anthropic',
+      minimizeThinking: false,
+    })
+
+    expect(result).toEqual({
+      maxThinkingTokens: 7_000,
+    })
+  })
+})
+
+describe('getThinkingTokens', () => {
+  it('returns the default (non-haiku) xhigh budget', () => {
+    // Any non-haiku model id — provider routing happens elsewhere.
+    expect(getThinkingTokens('xhigh', 'claude-sonnet-4-6')).toBe(26_000)
+  })
+
+  it('returns the haiku xhigh budget', () => {
+    expect(getThinkingTokens('xhigh', 'claude-haiku-4-5-20251001')).toBe(7_000)
   })
 })

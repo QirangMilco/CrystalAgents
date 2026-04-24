@@ -1,4 +1,4 @@
-import { query, createSdkMcpServer, tool, AbortError, type Query, type SDKUserMessage, type SDKAssistantMessageError, type Options, type SDKResultSuccess } from '@anthropic-ai/claude-agent-sdk';
+import { query, createSdkMcpServer, tool, AbortError, type Query, type SDKUserMessage, type SDKAssistantMessageError, type Options } from '@anthropic-ai/claude-agent-sdk';
 import { getDefaultOptions, resetClaudeConfigCheck } from './options.ts';
 // Local type for SDK user message content blocks (text, image, document)
 // Replaces import from @anthropic-ai/sdk/resources — keeps SDK as agent-only dependency
@@ -27,6 +27,7 @@ import { getCredentialManager } from '../credentials/index.ts';
 import { loadPreferences, formatPreferencesForPrompt, getCoAuthorPreference } from '../config/preferences.ts';
 import type { FileAttachment } from '../utils/files.ts';
 import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
+import { consumeLlmQueryMessages } from './claude-llm-query.ts';
 import { debug } from '../utils/debug.ts';
 import { guardLargeResult } from '../utils/large-response.ts';
 import {
@@ -180,6 +181,8 @@ export interface ClaudeAgentConfig {
   /** Mark transferred session summary as applied. */
   markTransferredSessionSummaryApplied?: () => void;
   isHeadless?: boolean;        // Running in headless mode (disables interactive tools)
+  /** Skip agent-level config file watching (server already owns a workspace-level watcher) */
+  skipConfigWatcher?: boolean;
   debugMode?: {                // Debug mode configuration (when running in dev)
     enabled: boolean;          // Whether debug mode is active
     logFilePath?: string;      // Path to the log file for querying
@@ -200,7 +203,7 @@ export interface ClaudeAgentConfig {
   mcpPool?: McpClientPool;
   /** LLM connection slug for credential lookup in postInit(). */
   connectionSlug?: string;
-  /** Enable 1M context window for Opus 4.6. Default: true. Set false to use 200K and conserve usage limits. */
+  /** Enable 1M context window for Opus 4.7. Default: true. Set false to use 200K and conserve usage limits. */
   enable1MContext?: boolean;
 }
 
@@ -546,6 +549,7 @@ export class ClaudeAgent extends BaseAgent {
       thinkingLevel: config.thinkingLevel,
       mcpToken: config.mcpToken,
       isHeadless: config.isHeadless,
+      skipConfigWatcher: config.skipConfigWatcher,
       debugMode: config.debugMode,
       systemPromptPreset: config.systemPromptPreset,
       onSdkSessionIdUpdate: config.onSdkSessionIdUpdate,
@@ -2636,7 +2640,9 @@ This is a branched conversation. All prior messages in this conversation are par
     const options = {
       ...getDefaultOptions(this.config.envOverrides),
       model,
-      maxTurns: 1,
+      // Reasoning-model outputs (Opus 4.7 extended thinking) can span multiple SDK-counted
+      // turns even with no tools exposed. Tool surface here is empty, so no tool-use loop risk.
+      maxTurns: 10,
       systemPrompt: request.systemPrompt ?? 'Reply with ONLY the requested text. No explanation.',
       ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
@@ -2645,28 +2651,10 @@ This is a branched conversation. All prior messages in this conversation are par
       } : {}),
     };
 
-    let result = '';
-    let structuredOutput: unknown = undefined;
-
-    for await (const msg of query({ prompt: request.prompt, options })) {
-      if (msg.type === 'assistant') {
-        for (const block of msg.message.content) {
-          if (block.type === 'text') {
-            result += block.text;
-          }
-        }
-      }
-      // Extract structured output from SDK result message
-      if (msg.type === 'result' && (msg as SDKResultSuccess).subtype === 'success') {
-        structuredOutput = (msg as SDKResultSuccess).structured_output;
-      }
-    }
-
-    // Prefer structured output when available
-    if (structuredOutput !== undefined) {
-      return { text: JSON.stringify(structuredOutput, null, 2) };
-    }
-    return { text: result.trim() };
+    return consumeLlmQueryMessages(
+      query({ prompt: request.prompt, options }),
+      (msg) => this.debug(msg),
+    );
   }
 
   // ============================================================

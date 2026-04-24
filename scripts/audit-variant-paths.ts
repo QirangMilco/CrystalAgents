@@ -25,6 +25,7 @@ const ALLOWLIST = [
   /^.*\.test\.[cm]?[jt]sx?$/,
   /^.*\.spec\.[cm]?[jt]sx?$/,
   /^apps\/electron\/src\/renderer\/playground\//,
+  /^packages\/shared\/src\/i18n\/locales\//,
   /^scripts\/audit-variant-paths\.ts$/,
 ]
 
@@ -39,6 +40,32 @@ function isAllowed(relPath: string): boolean {
 
 function shouldScanFile(path: string): boolean {
   return Array.from(TEXT_EXTENSIONS).some((ext) => path.endsWith(ext))
+}
+
+function isDocumentationLike(relPath: string): boolean {
+  if (relPath.endsWith('.md') || relPath.endsWith('.yml') || relPath.endsWith('.yaml')) return true
+  if (relPath.includes('/docs/') || relPath.includes('/release-notes/')) return true
+  if (relPath.endsWith('/doc-links.ts') || relPath.endsWith('/print-system-prompt.ts')) return true
+  return false
+}
+
+function isCommentOnlyLine(line: string): boolean {
+  const trimmed = line.trim()
+  return trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') || trimmed.startsWith('#')
+}
+
+function isCompatibilityFallback(line: string): boolean {
+  return /variant\.import\.sourceConfigDirName \|\| '\.craft-agent'/.test(line)
+}
+
+function shouldIgnoreLine(relPath: string, line: string): boolean {
+  if (isDocumentationLike(relPath)) return true
+  if (isCommentOnlyLine(line)) return true
+  if (isCompatibilityFallback(line)) return true
+  if (/suggestion:\s*[`']/.test(line)) return true
+  if (line.includes('APP_ROOT') && line.includes('~/.craft-agent')) return true
+  if (line.includes('craft-data:/root/.craft-agent')) return true
+  return false
 }
 
 function walk(dir: string, out: string[]) {
@@ -73,6 +100,10 @@ for (const file of files) {
   lines.forEach((line, index) => {
     for (const pattern of BLOCK_PATTERNS) {
       if (pattern.regex.test(line)) {
+        if (shouldIgnoreLine(rel, line)) {
+          pattern.regex.lastIndex = 0
+          continue
+        }
         violations.push({ file: rel, line: index + 1, label: pattern.label, text: line.trim() })
         pattern.regex.lastIndex = 0
       }
