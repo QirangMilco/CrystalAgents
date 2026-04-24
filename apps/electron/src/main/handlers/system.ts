@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { execSync } from 'child_process'
 import { appendFileSync, mkdirSync } from 'fs'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getGitBashPath, setGitBashPath, clearGitBashPath, getAppVariant } from '@craft-agent/shared/config'
+import { getGitBashPath, setGitBashPath, clearGitBashPath, getAppVariant, getCraftRendererDebugLogPath } from '@craft-agent/shared/config'
 import { isUsableGitBashPath, validateGitBashPath } from '@craft-agent/server-core/services'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import type { RpcServer } from '@craft-agent/server-core/transport'
@@ -40,9 +40,9 @@ function getRendererDebugLogPath(mainLogPath?: string): string | undefined {
 
   try {
     const logsDir = app.getPath('logs')
-    return logsDir ? join(logsDir, 'renderer-debug.log') : undefined
+    return logsDir ? join(logsDir, 'renderer-debug.log') : getCraftRendererDebugLogPath()
   } catch {
-    return undefined
+    return getCraftRendererDebugLogPath()
   }
 }
 

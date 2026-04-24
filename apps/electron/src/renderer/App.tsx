@@ -1093,6 +1093,37 @@ export default function App() {
     return session
   }, [addSession, syncSessionOptionsFromSession])
 
+  const loadCreatedSession = useCallback(async (sessionId: string): Promise<Session> => {
+    const session = await window.electronAPI.getSessionMessages(sessionId)
+    if (!session) {
+      throw new Error(`Session ${sessionId} was not found after creation`)
+    }
+
+    const existingMeta = store.get(sessionMetaMapAtom).has(sessionId)
+    if (existingMeta) {
+      updateSessionDirect(sessionId, () => session)
+      const metaMap = store.get(sessionMetaMapAtom)
+      const nextMetaMap = new Map(metaMap)
+      nextMetaMap.set(sessionId, extractSessionMeta(session))
+      store.set(sessionMetaMapAtom, nextMetaMap)
+    } else {
+      addSession(session)
+    }
+    syncSessionOptionsFromSession(session)
+
+    return session
+  }, [addSession, store, syncSessionOptionsFromSession, updateSessionDirect])
+
+  const handleCloneSession = useCallback(async (sessionId: string): Promise<Session> => {
+    const result = await window.electronAPI.cloneSession(sessionId)
+    return loadCreatedSession(result.sessionId)
+  }, [loadCreatedSession])
+
+  const handleCreateSessionFromSummary = useCallback(async (sessionId: string): Promise<Session> => {
+    const result = await window.electronAPI.createSessionFromSummary(sessionId)
+    return loadCreatedSession(result.sessionId)
+  }, [loadCreatedSession])
+
   // Deep link navigation is initialized later after handleInputChange is defined
 
   const handleDeleteSession = useCallback(async (sessionId: string, skipConfirmation = false): Promise<boolean> => {
@@ -1685,6 +1716,8 @@ export default function App() {
     sessionOptions,
     // Session callbacks
     onCreateSession: handleCreateSession,
+    onCloneSession: handleCloneSession,
+    onCreateSessionFromSummary: handleCreateSessionFromSummary,
     onSendMessage: handleSendMessage,
     onRenameSession: handleRenameSession,
     onFlagSession: handleFlagSession,
@@ -1728,6 +1761,8 @@ export default function App() {
     getDraft,
     sessionOptions,
     handleCreateSession,
+    handleCloneSession,
+    handleCreateSessionFromSummary,
     handleSendMessage,
     handleRenameSession,
     handleFlagSession,

@@ -130,6 +130,14 @@ export interface CreateSessionOptions {
   branchFromSessionId?: string
 }
 
+export interface CloneSessionResult {
+  sessionId: string
+}
+
+export interface CreateSessionFromSummaryResult {
+  sessionId: string
+}
+
 export interface RemoteSessionTransferPayload {
   sourceSessionId: string
   name?: string

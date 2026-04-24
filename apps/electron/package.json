@@ -1,6 +1,7 @@
 {
   "name": "@crystal-agent/electron",
   "version": "0.8.7",
+  "upstreamVersion": "0.8.7",
   "description": "Electron desktop app for Craft Agents",
   "main": "dist/main.cjs",
   "private": true,

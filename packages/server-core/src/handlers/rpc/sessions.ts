@@ -84,6 +84,8 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,
   RPC_CHANNELS.sessions.MARK_ALL_READ,
   RPC_CHANNELS.sessions.CREATE,
+  RPC_CHANNELS.sessions.CLONE,
+  RPC_CHANNELS.sessions.CREATE_FROM_SUMMARY,
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
   RPC_CHANNELS.sessions.SEND_MESSAGE,
@@ -154,6 +156,22 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     const session = await sessionManager.createSession(workspaceId, options)
     end()
     return session
+  })
+
+  // Clone a session inside the current workspace without mutating the source.
+  server.handle(RPC_CHANNELS.sessions.CLONE, async (ctx, sessionId: string) => {
+    await sessionManager.waitForInit()
+    const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+    if (!workspaceId) throw new Error('No workspace context')
+    return sessionManager.cloneSession(sessionId, workspaceId)
+  })
+
+  // Create a new session seeded from a temporary summary of the source session.
+  server.handle(RPC_CHANNELS.sessions.CREATE_FROM_SUMMARY, async (ctx, sessionId: string) => {
+    await sessionManager.waitForInit()
+    const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+    if (!workspaceId) throw new Error('No workspace context')
+    return sessionManager.createSessionFromSummary(sessionId, workspaceId)
   })
 
   // Delete a session

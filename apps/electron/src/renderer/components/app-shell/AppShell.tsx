@@ -1301,7 +1301,7 @@ function AppShellContent({
       return
     }
 
-    setSessionStatuses(statusConfigsToSessionStatuses(statusConfigs, activeWorkspace.id, isDark))
+    setSessionStatuses(statusConfigsToSessionStatuses(statusConfigs, activeWorkspace.id, workspaceDataDirName, isDark))
   }, [statusConfigs, activeWorkspace?.id, isDark])
 
   // Optimistic status order: immediately reflects drag-drop order while IPC propagates.
@@ -3806,9 +3806,9 @@ function AppShellContent({
             align="start"
             secondaryAction={{
               label: 'Edit File',
-              filePath: `${activeWorkspace.rootPath}/statuses/config.json`,
+              filePath: `${activeWorkspace.rootPath}/${workspaceDataDirName}/statuses/config.json`,
             }}
-            {...getEditConfig('edit-statuses', activeWorkspace.rootPath)}
+            {...getEditConfig('edit-statuses', `${activeWorkspace.rootPath}/${workspaceDataDirName}`)}
           />
           {/* Configure Labels EditPopover - anchored near sidebar */}
           <EditPopover

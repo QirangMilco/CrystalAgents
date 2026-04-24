@@ -8,7 +8,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { AlertCircle, Globe, Copy, RefreshCw, Link2Off, Info } from 'lucide-react'
+import { AlertCircle, Globe, Copy, RefreshCw, Link2Off, Info, CopyPlus, Sparkles, SplitSquareHorizontal } from 'lucide-react'
 import { ChatDisplay, type ChatDisplayHandle } from '@/components/app-shell/ChatDisplay'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
@@ -20,7 +20,7 @@ import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu
 import { StyledDropdownMenuContent, StyledDropdownMenuItem, StyledDropdownMenuSeparator } from '@/components/ui/styled-dropdown'
 import { useAppShellContext, usePendingPermission, usePendingCredential, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
 import { rendererPerf } from '@/lib/perf'
-import { routes } from '@/lib/navigate'
+import { navigate, routes } from '@/lib/navigate'
 import { ensureSessionMessagesLoadedAtom, loadedSessionsAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { getSessionTitle } from '@/utils/session'
 // Model resolution: connection.defaultModel (no hardcoded defaults)
@@ -66,6 +66,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onUnarchiveSession,
     onSessionStatusChange,
     onDeleteSession,
+    onCloneSession,
+    onCreateSessionFromSummary,
     rightSidebarButton,
     leadingAction,
     isCompactMode,
@@ -425,6 +427,66 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId])
 
+  const [isSessionActionRunning, setIsSessionActionRunning] = React.useState(false)
+
+  const handleCloneSession = React.useCallback(async () => {
+    if (isSessionActionRunning) return
+    setIsSessionActionRunning(true)
+    const toastId = toast.loading(t('toast.cloningSession'))
+    try {
+      const cloned = await onCloneSession(sessionId)
+      toast.success(t('toast.sessionCloned'), { id: toastId })
+      navigate(routes.view.allSessions(cloned.id))
+    } catch (error) {
+      toast.error(t('toast.failedToCloneSession'), {
+        id: toastId,
+        description: error instanceof Error ? error.message : t('toast.unknownError'),
+      })
+    } finally {
+      setIsSessionActionRunning(false)
+    }
+  }, [isSessionActionRunning, onCloneSession, sessionId, t])
+
+  const handleCreateSessionFromSummary = React.useCallback(async () => {
+    if (isSessionActionRunning) return
+    setIsSessionActionRunning(true)
+    const toastId = toast.loading(t('toast.summarizingSession'))
+    try {
+      const summarized = await onCreateSessionFromSummary(sessionId)
+      toast.success(t('toast.summarySessionCreated'), { id: toastId })
+      navigate(routes.view.allSessions(summarized.id))
+    } catch (error) {
+      toast.error(t('toast.failedToSummarizeSession'), {
+        id: toastId,
+        description: error instanceof Error ? error.message : t('toast.unknownError'),
+      })
+    } finally {
+      setIsSessionActionRunning(false)
+    }
+  }, [isSessionActionRunning, onCreateSessionFromSummary, sessionId, t])
+
+  const sessionActionsButton = React.useMemo(() => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <PanelHeaderCenterButton
+          aria-label={t('sessionMenu.sessionActions')}
+          icon={<SplitSquareHorizontal className="h-4 w-4" />}
+          disabled={isSessionActionRunning || session?.isProcessing || sessionMeta?.isProcessing}
+        />
+      </DropdownMenuTrigger>
+      <StyledDropdownMenuContent align="end" sideOffset={8}>
+        <StyledDropdownMenuItem onClick={handleCloneSession} disabled={isSessionActionRunning}>
+          <CopyPlus className="h-3.5 w-3.5" />
+          <span className="flex-1">{t('sessionMenu.cloneSession')}</span>
+        </StyledDropdownMenuItem>
+        <StyledDropdownMenuItem onClick={handleCreateSessionFromSummary} disabled={isSessionActionRunning}>
+          <Sparkles className="h-3.5 w-3.5" />
+          <span className="flex-1">{t('sessionMenu.startFromSummary')}</span>
+        </StyledDropdownMenuItem>
+      </StyledDropdownMenuContent>
+    </DropdownMenu>
+  ), [handleCloneSession, handleCreateSessionFromSummary, isSessionActionRunning, session?.isProcessing, sessionMeta?.isProcessing, t])
+
   // Share button with dropdown menu rendered in PanelHeader actions slot
   const shareButton = React.useMemo(() => (
     <DropdownMenu>
@@ -505,7 +567,12 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     )
   }, [isCompactMode, sessionId, session?.sessionFolderPath, sessionMeta])
 
-  const headerActions = isCompactMode ? compactInfoButton : shareButton
+  const headerActions = (
+    <>
+      {sessionActionsButton}
+      {isCompactMode ? compactInfoButton : shareButton}
+    </>
+  )
 
   // Build title menu content for chat sessions using shared SessionMenu
   const titleMenu = React.useMemo(() => sessionMeta ? (

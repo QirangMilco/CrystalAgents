@@ -858,6 +858,32 @@ describe('PiEventAdapter', () => {
       });
     });
 
+    it('should infer error from result.details.isError when event.isError is missing', () => {
+      collect(adapter.adaptEvent({ type: 'turn_start' } as any));
+      collect(adapter.adaptEvent({
+        type: 'tool_execution_start',
+        toolCallId: 'call_1',
+        toolName: 'read',
+        args: {},
+      } as any));
+
+      const events = collect(adapter.adaptEvent({
+        type: 'tool_execution_end',
+        toolCallId: 'call_1',
+        result: {
+          content: [{ type: 'text', text: 'Invalid Read tool input: missing required field "path".' }],
+          details: { isError: true },
+        },
+      } as any));
+
+      expect(events[0]).toMatchObject({
+        type: 'tool_result',
+        toolName: 'Read',
+        isError: true,
+        result: 'Invalid Read tool input: missing required field "path".',
+      });
+    });
+
     it('should accumulate partial output from tool_execution_update', () => {
       collect(adapter.adaptEvent({ type: 'turn_start' } as any));
       collect(adapter.adaptEvent({

@@ -23,6 +23,8 @@ export const CHANNEL_MAP = {
   markAllSessionsRead: invoke(RPC_CHANNELS.sessions.MARK_ALL_READ),
   getSessionMessages: invoke(RPC_CHANNELS.sessions.GET_MESSAGES),
   createSession: invoke(RPC_CHANNELS.sessions.CREATE),
+  cloneSession: invoke(RPC_CHANNELS.sessions.CLONE),
+  createSessionFromSummary: invoke(RPC_CHANNELS.sessions.CREATE_FROM_SUMMARY),
   deleteSession: invoke(RPC_CHANNELS.sessions.DELETE),
   sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE),
   cancelProcessing: invoke(RPC_CHANNELS.sessions.CANCEL),

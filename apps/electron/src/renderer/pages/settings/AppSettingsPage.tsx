@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ExternalLink } from 'lucide-react'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
@@ -34,6 +35,7 @@ import {
 } from '@/components/settings'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { useAppShellContext } from '@/context/AppShellContext'
+import electronPackageJson from '../../../../package.json'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -50,6 +52,12 @@ interface ProxyFormState {
   httpsProxy: string
   noProxy: string
 }
+
+const CRYSTAL_REPOSITORY_URL = 'https://github.com/QirangMilco/CrystalAgents'
+const UPSTREAM_REPOSITORY_URL = 'https://github.com/lukilabs/craft-agents-oss'
+const UPSTREAM_VERSION = typeof electronPackageJson.upstreamVersion === 'string'
+  ? electronPackageJson.upstreamVersion
+  : undefined
 
 const EMPTY_PROXY_FORM: ProxyFormState = {
   enabled: false,
@@ -504,7 +512,7 @@ export default function AppSettingsPage() {
               {/* About */}
               <SettingsSection title={t("settings.about.title")}>
                 <SettingsCard>
-                  <SettingsRow label={t("settings.about.version")}>
+                  <SettingsRow label={t("settings.about.crystalVersion")}>
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">
                         {updateChecker.updateInfo?.currentVersion ?? t("common.loading")}
@@ -515,6 +523,33 @@ export default function AppSettingsPage() {
                           <span>{t("settings.about.downloading", { version: updateChecker.updateInfo.latestVersion, percent: updateChecker.downloadProgress })}</span>
                         </div>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                        aria-label={t("settings.about.openCrystalRepository")}
+                        title={t("settings.about.openCrystalRepository")}
+                        onClick={() => window.electronAPI.openUrl(CRYSTAL_REPOSITORY_URL)}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </SettingsRow>
+                  <SettingsRow label={t("settings.about.upstreamVersion")}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">
+                        {UPSTREAM_VERSION ?? t("common.unknown")}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                        aria-label={t("settings.about.openUpstreamRepository")}
+                        title={t("settings.about.openUpstreamRepository")}
+                        onClick={() => window.electronAPI.openUrl(UPSTREAM_REPOSITORY_URL)}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </SettingsRow>
                   {isElectron && (

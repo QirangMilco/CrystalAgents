@@ -64,6 +64,7 @@ import { buildCallLlmRequest, withTimeout, LLM_QUERY_TIMEOUT_MS } from '../../sh
 import type { LLMQueryRequest, LLMQueryResult } from '../../shared/src/agent/llm-tool.ts';
 import { PI_TOOL_NAME_MAP, THINKING_TO_PI } from '../../shared/src/agent/backend/pi/constants.ts';
 import { getDefaultSummarizationModel } from '../../shared/src/config/models.ts';
+import { getCraftMainLogPath } from '../../shared/src/config/log-paths.ts';
 import { createWebFetchTool } from './tools/web-fetch.ts';
 import { resolveSearchProvider } from './tools/search/resolve-provider.ts';
 import { createSearchTool } from './tools/search/create-search-tool.ts';
@@ -240,8 +241,18 @@ let activeToolContext: {
   toolName?: string;
   toolCallId?: string;
   requestId?: string;
-  sourceLayer?: 'sdk-ajv' | 'native-validation' | 'auto-compaction';
+  sourceLayer?: 'sdk-ajv' | 'native-validation' | 'auto-compaction' | 'pre-tool-use' | 'proxy-tool-request';
   args?: Record<string, unknown>;
+  rawArgs?: Record<string, unknown>;
+  normalizedArgs?: Record<string, unknown>;
+  schemaSummary?: string;
+  validationCount?: number;
+  stage?: string;
+} | null = null;
+let toolValidationRepeatState: {
+  toolName?: string;
+  sourceLayer?: string;
+  count: number;
 } | null = null;
 
 // Pending promises for async handshakes
@@ -300,7 +311,7 @@ function compactionSummaryIoEnabled(): boolean {
 }
 
 function getElectronMainLogPath(): string {
-  return join(homedir(), 'Library/Logs/@crystal-agent/electron/main.log');
+  return getCraftMainLogPath();
 }
 
 function persistCompactionFailure(message: string): void {
@@ -363,6 +374,42 @@ function getPromptSnippet(): string {
   return text.length > 160 ? `${text.slice(0, 157)}...` : text;
 }
 
+function summarizeToolSchema(schema: Record<string, unknown> | undefined): string | undefined {
+  if (!schema) return undefined;
+  const required = Array.isArray(schema.required) ? schema.required.filter((v): v is string => typeof v === 'string') : [];
+  const properties = schema.properties && typeof schema.properties === 'object'
+    ? Object.keys(schema.properties as Record<string, unknown>).sort()
+    : [];
+  const additionalProperties = schema.additionalProperties === undefined
+    ? 'default'
+    : String(schema.additionalProperties);
+  return `required=${required.join(',') || '∅'} properties=${properties.join(',') || '∅'} additionalProperties=${additionalProperties}`;
+}
+
+function updateToolValidationRepeatState(toolName: string | undefined, sourceLayer: string | undefined): number {
+  if (toolValidationRepeatState?.toolName === toolName && toolValidationRepeatState?.sourceLayer === sourceLayer) {
+    toolValidationRepeatState.count += 1;
+    return toolValidationRepeatState.count;
+  }
+  toolValidationRepeatState = { toolName, sourceLayer, count: 1 };
+  return 1;
+}
+
+function classifyCompactionError(errorMessage: string): string {
+  if (errorMessage.includes('_autoCompactionAbortController')) return 'local-state';
+  if (errorMessage.includes('Summarization failed:')) return 'upstream-stream';
+  if (errorMessage.includes('stream ID') || errorMessage.includes('INTERNAL_ERROR')) return 'upstream-stream';
+  if (errorMessage.includes('Failed to parse') || errorMessage.includes('JSON')) return 'downstream-parse';
+  return 'unknown';
+}
+
+function classifyToolValidationFailure(errorMessage: string): string {
+  if (errorMessage.includes('must have required property')) return 'missing-required-args';
+  if (errorMessage.includes('must NOT have additional properties')) return 'unexpected-arguments';
+  if (errorMessage.includes('must be object')) return 'invalid-arg-shape';
+  return 'tool-validation';
+}
+
 function formatFailureContext(base: Record<string, string | number | undefined>, extraDebug?: Record<string, string | number | undefined>): string {
   const fields: Array<[string, string | number | undefined]> = [
     ['sessionId', initConfig?.sessionId],
@@ -370,6 +417,9 @@ function formatFailureContext(base: Record<string, string | number | undefined>,
     ['toolCallId', activeToolContext?.toolCallId],
     ['toolName', activeToolContext?.toolName],
     ['sourceLayer', activeToolContext?.sourceLayer],
+    ['stage', activeToolContext?.stage],
+    ['validationCount', activeToolContext?.validationCount],
+    ['schemaSummary', activeToolContext?.schemaSummary],
     ...Object.entries(base),
   ];
   if (process.env.CRAFT_DEBUG === '1') {
@@ -379,6 +429,12 @@ function formatFailureContext(base: Record<string, string | number | undefined>,
     }
     if (activeToolContext?.args) {
       fields.push(['arguments', JSON.stringify(activeToolContext.args)]);
+    }
+    if (activeToolContext?.rawArgs) {
+      fields.push(['rawArguments', JSON.stringify(activeToolContext.rawArgs)]);
+    }
+    if (activeToolContext?.normalizedArgs) {
+      fields.push(['normalizedArguments', JSON.stringify(activeToolContext.normalizedArgs)]);
     }
   }
   return fields
@@ -573,6 +629,7 @@ function patchSessionAutoCompaction(session: AgentSession): void {
             runId,
             reason,
             elapsedMs: Date.now() - startedAt,
+            failureClass: classifyCompactionError(errorMessage),
             model: describeModel(this.model),
             settings: describeCompactionSettings(this.settingsManager?.getCompactionSettings?.()),
             error: errorMessage,
@@ -582,6 +639,7 @@ function patchSessionAutoCompaction(session: AgentSession): void {
           {
             willRetry: willRetry ? 1 : 0,
             branchSummary: summarizeMessageWindow(this.agent?.state?.messages ?? []),
+            activeRun: JSON.stringify(this.__craftActiveCompactionRun ?? null),
           },
         );
         if (compactionSummaryIoEnabled()) {
@@ -1141,6 +1199,17 @@ async function requestPreToolUseApproval(
 ): Promise<Record<string, unknown>> {
   const requestId = `pi-ptu-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const normalizedInput = normalizeSessionToolMetadataArgs(input);
+  activeToolContext = {
+    ...(activeToolContext ?? {}),
+    toolName: sdkToolName,
+    toolCallId,
+    requestId,
+    sourceLayer: 'pre-tool-use',
+    rawArgs: input,
+    normalizedArgs: normalizedInput,
+    args: normalizedInput,
+    stage: 'pre-tool-use-request',
+  };
 
   if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
     debugLog(`[tool-title-debug][subprocess] pre_tool_use_request ${sdkToolName} (${toolCallId ?? 'no-call-id'}) keys=${Object.keys(normalizedInput).sort().join(',') || '∅'} hasDisplayName=${typeof normalizedInput._displayName === 'string' ? 1 : 0} hasIntent=${typeof normalizedInput._intent === 'string' ? 1 : 0}`);
@@ -1225,11 +1294,19 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
     const validation = validateNativeToolInput(sdkToolName, inputObj);
     if (!validation.ok) {
       debugLog(`[tool-args-debug][subprocess] native_execute_invalid_input tool=${sdkToolName} toolCallId=${toolCallId} missing=${validation.missing} keys=${Object.keys(inputObj).sort().join(',') || '∅'} payload=${JSON.stringify(inputObj)}`);
+      const rawFailureClass = classifyToolValidationFailure(validation.message);
+      const validationCount = updateToolValidationRepeatState(sdkToolName, 'native-validation');
       activeToolContext = {
         toolName: sdkToolName,
         toolCallId,
+        requestId: currentPromptRequestId ?? activeToolContext?.requestId,
         sourceLayer: 'native-validation',
         args: inputObj,
+        rawArgs: params as Record<string, unknown>,
+        normalizedArgs: inputObj,
+        schemaSummary: summarizeToolSchema(tool.parameters as Record<string, unknown> | undefined),
+        validationCount,
+        stage: 'native-execute-pre-ptu',
       };
       logToolValidationFailure(formatFailureContext({
         category: 'tool-validation',
@@ -1237,6 +1314,7 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
         missing: validation.missing,
         message: validation.message,
         sourceLayer: 'native-validation',
+        failureClass: rawFailureClass,
       }));
       return {
         content: [{ type: 'text', text: validation.message }],
@@ -1349,6 +1427,16 @@ function buildProxyTools(): AgentTool<any>[] {
       }
 
       const inputObj = { ...(params as Record<string, unknown>) };
+      activeToolContext = {
+        toolName: def.name,
+        toolCallId,
+        sourceLayer: 'proxy-tool-request',
+        rawArgs: params as Record<string, unknown>,
+        normalizedArgs: inputObj,
+        args: inputObj,
+        schemaSummary: summarizeToolSchema(def.inputSchema as Record<string, unknown> | undefined),
+        stage: 'proxy-tool-pre-ptu',
+      };
 
       // Permission checking via main process
       const approvedInput = await requestPreToolUseApproval(def.name, inputObj, toolCallId);
@@ -1362,6 +1450,14 @@ function buildProxyTools(): AgentTool<any>[] {
       if (process.env.CRAFT_DEBUG_TOOL_ARGS === '1') {
         debugLog(`[tool-args-debug][subprocess] tool_execute_request tool=${def.name} requestId=${requestId} keys=${Object.keys(approvedInput).sort().join(',') || '∅'} payload=${JSON.stringify(approvedInput)}`);
       }
+
+      activeToolContext = {
+        ...(activeToolContext ?? {}),
+        requestId,
+        args: approvedInput,
+        normalizedArgs: approvedInput,
+        stage: 'proxy-tool-execute-request',
+      };
 
       send({
         type: 'tool_execute_request',
@@ -1864,6 +1960,8 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
           streamingBehavior: 'followUp',
         });
         debugLog('Compact+retry succeeded after overflow');
+        currentPromptRequestId = null;
+        activeToolContext = null;
         return;
       } catch (retryError) {
         const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
@@ -1882,14 +1980,20 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
 
     debugLog(`Prompt failed: ${errorMsg}`);
     if (isToolValidationFailureMessage(errorMsg)) {
+      const toolNameFromError = errorMsg.match(/Validation failed for tool "([^"]+)"/)?.[1];
+      const validationCount = updateToolValidationRepeatState(toolNameFromError ?? activeToolContext?.toolName, 'sdk-ajv');
       activeToolContext = {
         ...(activeToolContext ?? {}),
+        toolName: toolNameFromError ?? activeToolContext?.toolName,
         sourceLayer: 'sdk-ajv',
+        validationCount,
+        stage: activeToolContext?.stage ?? 'handle-prompt-catch',
       };
       logToolValidationFailure(formatFailureContext(
         {
           category: 'tool-validation',
           sourceLayer: 'sdk-ajv',
+          failureClass: classifyToolValidationFailure(errorMsg),
           message: errorMsg,
         },
         {

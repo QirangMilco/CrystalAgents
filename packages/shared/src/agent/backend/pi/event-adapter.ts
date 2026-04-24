@@ -345,7 +345,7 @@ export class PiEventAdapter extends BaseEventAdapter {
         // Use accumulated output from partial results if available
         const accumulatedOutput = this.consumeOutput(toolCallId);
 
-        const isError = event.isError;
+        const isError = event.isError === true || this.hasToolResultErrorFlag(event.result);
         let result: string;
 
         if (accumulatedOutput) {
@@ -586,6 +586,12 @@ export class PiEventAdapter extends BaseEventAdapter {
     }
 
     return null;
+  }
+
+  private hasToolResultErrorFlag(result: unknown): boolean {
+    if (!result || typeof result !== 'object') return false;
+    const details = (result as { details?: { isError?: unknown } }).details;
+    return details?.isError === true;
   }
 
   /**

@@ -100,6 +100,7 @@ jobs:
     needs: prepare-release
     env:
       RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
+      UPSTREAM_VERSION: ${{ needs.prepare-release.outputs.upstream_version }}
 
     steps:
       - name: Checkout
@@ -123,8 +124,9 @@ jobs:
       - name: Set release version
         shell: bash
         run: |
-          node -e 'const fs=require("fs"); const path="apps/electron/package.json"; const pkg=JSON.parse(fs.readFileSync(path,"utf8")); pkg.version=process.env.RELEASE_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+"\n");'
+          node -e 'const fs=require("fs"); const path="apps/electron/package.json"; const pkg=JSON.parse(fs.readFileSync(path,"utf8")); pkg.version=process.env.RELEASE_VERSION; pkg.upstreamVersion=process.env.UPSTREAM_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+"\n");'
           echo "Building release version: $RELEASE_VERSION"
+          echo "Based on upstream version: $UPSTREAM_VERSION"
 
       - name: Build Windows x64 package
         working-directory: apps/electron
@@ -144,6 +146,7 @@ jobs:
     needs: prepare-release
     env:
       RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
+      UPSTREAM_VERSION: ${{ needs.prepare-release.outputs.upstream_version }}
 
     steps:
       - name: Checkout
@@ -167,8 +170,9 @@ jobs:
       - name: Set release version
         shell: bash
         run: |
-          node -e 'const fs=require("fs"); const path="apps/electron/package.json"; const pkg=JSON.parse(fs.readFileSync(path,"utf8")); pkg.version=process.env.RELEASE_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+"\n");'
+          node -e 'const fs=require("fs"); const path="apps/electron/package.json"; const pkg=JSON.parse(fs.readFileSync(path,"utf8")); pkg.version=process.env.RELEASE_VERSION; pkg.upstreamVersion=process.env.UPSTREAM_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+"\n");'
           echo "Building release version: $RELEASE_VERSION"
+          echo "Based on upstream version: $UPSTREAM_VERSION"
 
       - name: Build Linux x64 package
         working-directory: apps/electron
@@ -206,6 +210,7 @@ jobs:
     needs: prepare-release
     env:
       RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
+      UPSTREAM_VERSION: ${{ needs.prepare-release.outputs.upstream_version }}
 
     steps:
       - name: Checkout
@@ -229,8 +234,9 @@ jobs:
       - name: Set release version
         shell: bash
         run: |
-          node -e 'const fs=require("fs"); const path="apps/electron/package.json"; const pkg=JSON.parse(fs.readFileSync(path,"utf8")); pkg.version=process.env.RELEASE_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+"\n");'
+          node -e 'const fs=require("fs"); const path="apps/electron/package.json"; const pkg=JSON.parse(fs.readFileSync(path,"utf8")); pkg.version=process.env.RELEASE_VERSION; pkg.upstreamVersion=process.env.UPSTREAM_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+"\n");'
           echo "Building release version: $RELEASE_VERSION"
+          echo "Based on upstream version: $UPSTREAM_VERSION"
 
       - name: Build macOS arm64 package
         working-directory: apps/electron

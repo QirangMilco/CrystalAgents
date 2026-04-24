@@ -79,7 +79,7 @@ import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type CloneSessionResult, type CreateSessionFromSummaryResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, invalidateSkillsCache, type LoadedSkill } from '@craft-agent/shared/skills'
@@ -6924,6 +6924,109 @@ export class SessionManager implements ISessionManager {
     await sessionPersistenceQueue.flush(session.id)
 
     return { sessionId: session.id }
+  }
+
+  async cloneSession(sessionId: string, workspaceId: string): Promise<CloneSessionResult> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+
+    if (managed.workspace.id !== workspaceId) {
+      throw new Error(`Session ${sessionId} does not belong to workspace ${workspaceId}`)
+    }
+
+    if (managed.isProcessing) {
+      throw new Error('Cannot clone a session while it is processing')
+    }
+
+    this.persistSession(managed)
+    await sessionPersistenceQueue.flush(sessionId)
+
+    const bundle = serializeSession(managed.workspace.rootPath, sessionId)
+    if (!bundle) {
+      throw new Error(`Failed to serialize session ${sessionId}`)
+    }
+
+    if (!validateBundle(bundle)) {
+      throw new Error('Invalid session bundle')
+    }
+
+    const workspace = managed.workspace
+    const workspaceRootPath = workspace.rootPath
+    const clonedSessionId = generateSessionId(workspaceRootPath)
+    const clonedSessionDir = ensureSessionDir(workspaceRootPath, clonedSessionId)
+    const now = Date.now()
+    const header = bundle.session.header
+
+    const storedSession: StoredSession = {
+      id: clonedSessionId,
+      workspaceRootPath,
+      sdkSessionId: undefined,
+      sdkCwd: getSessionStoragePath(workspaceRootPath, clonedSessionId),
+      name: header.name,
+      createdAt: now,
+      lastUsedAt: now,
+      lastMessageAt: header.lastMessageAt,
+      isFlagged: header.isFlagged,
+      permissionMode: header.permissionMode,
+      previousPermissionMode: header.previousPermissionMode,
+      sessionStatus: header.sessionStatus,
+      labels: header.labels,
+      enabledSourceSlugs: header.enabledSourceSlugs,
+      workingDirectory: header.workingDirectory,
+      model: header.model,
+      llmConnection: header.llmConnection,
+      connectionLocked: false,
+      thinkingLevel: header.thinkingLevel,
+      hidden: header.hidden,
+      transferredSessionSummary: header.transferredSessionSummary,
+      transferredSessionSummaryApplied: header.transferredSessionSummaryApplied,
+      messages: bundle.session.messages,
+      tokenUsage: header.tokenUsage ?? DEFAULT_TOKEN_USAGE,
+    }
+
+    const clonedSessionFile = getSessionFilePath(workspaceRootPath, clonedSessionId)
+    writeSessionJsonl(clonedSessionFile, storedSession)
+    restoreFiles(clonedSessionDir, bundle.files)
+
+    const { messages, ...sessionMeta } = storedSession
+    const clonedManaged = createManagedSession(sessionMeta, workspace, {
+      messagesLoaded: true,
+      workingDirectory: storedSession.workingDirectory,
+    })
+    clonedManaged.messages = messages.map(storedToMessage)
+
+    setPermissionMode(clonedSessionId, clonedManaged.permissionMode ?? 'ask', { changedBy: 'restore' })
+    if (clonedManaged.previousPermissionMode) {
+      hydratePreviousPermissionMode(clonedSessionId, clonedManaged.previousPermissionMode)
+    }
+
+    this.sessions.set(clonedSessionId, clonedManaged)
+
+    const automationSystem = this.automationSystems.get(workspaceRootPath)
+    if (automationSystem) {
+      automationSystem.setInitialSessionMetadata(clonedSessionId, {
+        permissionMode: storedSession.permissionMode,
+        labels: storedSession.labels,
+        isFlagged: storedSession.isFlagged,
+        sessionStatus: storedSession.sessionStatus,
+        sessionName: clonedManaged.name,
+      })
+    }
+
+    this.sendEvent({ type: 'session_created', sessionId: clonedSessionId }, workspaceId)
+
+    return { sessionId: clonedSessionId }
+  }
+
+  async createSessionFromSummary(sessionId: string, workspaceId: string): Promise<CreateSessionFromSummaryResult> {
+    const payload = await this.exportRemoteSessionTransfer(sessionId, workspaceId)
+    if (!payload) {
+      throw new Error(`Failed to summarize session ${sessionId}`)
+    }
+
+    return this.importRemoteSessionTransfer(workspaceId, payload)
   }
 
   /**

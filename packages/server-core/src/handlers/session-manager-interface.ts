@@ -169,6 +169,16 @@ export interface ISessionManager {
     payload: import('@craft-agent/shared/protocol').RemoteSessionTransferPayload,
   ): Promise<import('@craft-agent/shared/protocol').ImportRemoteSessionTransferResult>
 
+  /**
+   * Clone a session inside the same workspace without mutating the source session.
+   */
+  cloneSession(sessionId: string, workspaceId: string): Promise<import('@craft-agent/shared/protocol').CloneSessionResult>
+
+  /**
+   * Create a new session seeded from a temporary source-session summary.
+   */
+  createSessionFromSummary(sessionId: string, workspaceId: string): Promise<import('@craft-agent/shared/protocol').CreateSessionFromSummaryResult>
+
   // ---------------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------------

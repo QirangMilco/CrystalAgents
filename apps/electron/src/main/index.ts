@@ -207,12 +207,16 @@ const DEFAULT_APP_NAME = variant.bundleDisplayName || 'Craft Agents'
 app.setName(DEFAULT_APP_NAME)
 
 const isolatedElectronDataDir = process.env.CRAFT_ELECTRON_USER_DATA_DIR?.trim()
+const explicitElectronLogsDir = process.env.CRAFT_LOGS_DIR?.trim()
 if (isolatedElectronDataDir) {
   mkdirSync(isolatedElectronDataDir, { recursive: true })
   app.setPath('userData', isolatedElectronDataDir)
   app.setPath('sessionData', join(isolatedElectronDataDir, 'session-data'))
-  app.setPath('logs', join(isolatedElectronDataDir, 'logs'))
+  app.setPath('logs', explicitElectronLogsDir || join(isolatedElectronDataDir, 'logs'))
   app.setPath('crashDumps', join(isolatedElectronDataDir, 'crash-dumps'))
+} else if (explicitElectronLogsDir) {
+  mkdirSync(explicitElectronLogsDir, { recursive: true })
+  app.setPath('logs', explicitElectronLogsDir)
 }
 
 // Register as default protocol client for craftagents:// URLs

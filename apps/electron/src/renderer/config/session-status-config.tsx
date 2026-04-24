@@ -56,6 +56,7 @@ export interface SessionStatus extends SessionStatusConfig {
 export function statusConfigToSessionStatus(
   config: StatusConfig,
   workspaceId: string,
+  workspaceDataDir: string,
   isDark: boolean
 ): SessionStatus {
   // Emojis have their own colors and don't respond to CSS color inheritance.
@@ -76,6 +77,7 @@ export function statusConfigToSessionStatus(
         statusId={config.id}
         icon={config.icon}
         workspaceId={workspaceId}
+        workspaceDataDir={workspaceDataDir}
         size="xs"
         chromeless={!iconColorable}
       />
@@ -93,9 +95,10 @@ export function statusConfigToSessionStatus(
 export function statusConfigsToSessionStatuses(
   configs: StatusConfig[],
   workspaceId: string,
+  workspaceDataDir: string,
   isDark: boolean
 ): SessionStatus[] {
-  return configs.map(c => statusConfigToSessionStatus(c, workspaceId, isDark))
+  return configs.map(c => statusConfigToSessionStatus(c, workspaceId, workspaceDataDir, isDark))
 }
 
 // ============================================================================

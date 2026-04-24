@@ -1,4 +1,5 @@
 import log from 'electron-log/main'
+import { getCraftMainLogPath } from '@craft-agent/shared/config'
 
 /**
  * Resolve debug mode deterministically across runtimes.
@@ -26,9 +27,11 @@ function resolveDebugMode(): boolean {
 }
 
 export const isDebugMode = resolveDebugMode()
+const resolvedMainLogPath = getCraftMainLogPath()
 
 // Configure transports based on debug mode
 if (isDebugMode) {
+  log.transports.file.resolvePathFn = () => resolvedMainLogPath
   // JSON format for file (agent-parseable)
   // Note: format expects (params: FormatParams) => any[], where params.message has the LogMessage fields
   log.transports.file.format = ({ message }) => [
@@ -73,7 +76,7 @@ export const searchLog = log.scope('search')
  */
 export function getLogFilePath(): string | undefined {
   if (!isDebugMode) return undefined
-  return log.transports.file.getFile()?.path
+  return resolvedMainLogPath
 }
 
 export default log

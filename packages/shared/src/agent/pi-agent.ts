@@ -19,6 +19,7 @@ import { createInterface, type Interface as ReadlineInterface } from 'node:readl
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
+import { getCraftMainLogPath } from '../config/log-paths.ts';
 
 import type {
   BackendConfig,
@@ -90,8 +91,29 @@ function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function summarizeSchema(schema: Record<string, unknown> | undefined): string | undefined {
+  if (!schema) return undefined;
+  const required = Array.isArray(schema.required) ? schema.required.filter((v): v is string => typeof v === 'string') : [];
+  const properties = schema.properties && typeof schema.properties === 'object'
+    ? Object.keys(schema.properties as Record<string, unknown>).sort()
+    : [];
+  const additionalProperties = schema.additionalProperties === undefined
+    ? 'default'
+    : String(schema.additionalProperties);
+  return `required=${required.join(',') || '∅'} properties=${properties.join(',') || '∅'} additionalProperties=${additionalProperties}`;
+}
+
+const mainProcessToolValidationRepeatState = new Map<string, number>();
+
+function updateMainProcessToolValidationCount(toolName: string, sourceLayer: string): number {
+  const key = `${sourceLayer}:${toolName}`;
+  const next = (mainProcessToolValidationRepeatState.get(key) ?? 0) + 1;
+  mainProcessToolValidationRepeatState.set(key, next);
+  return next;
+}
+
 function getElectronMainLogPath(): string {
-  return join(homedir(), 'Library/Logs/@crystal-agent/electron/main.log');
+  return getCraftMainLogPath();
 }
 
 function persistMainProcessToolValidationFailure(message: string): void {
@@ -114,6 +136,20 @@ function formatMainProcessToolValidationContext(base: Record<string, string | nu
     .filter(([, value]) => value !== undefined && value !== '')
     .map(([key, value]) => `${key}=${JSON.stringify(String(value))}`)
     .join(' ');
+}
+
+function classifyToolValidationFailure(message: string): string {
+  if (message.includes("must have required property")) return 'missing-required-args';
+  if (message.includes('must NOT have additional properties')) return 'unexpected-arguments';
+  if (message.includes('must be object')) return 'invalid-arg-shape';
+  return 'tool-validation';
+}
+
+function persistStructuredMainProcessToolValidationFailure(
+  base: Record<string, string | number | undefined>,
+  extraDebug?: Record<string, string | number | undefined>,
+): void {
+  persistMainProcessToolValidationFailure(formatMainProcessToolValidationContext(base, extraDebug));
 }
 
 function normalizeSessionToolMetadataArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -183,6 +219,16 @@ export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
  * planning heuristics, config watching, usage tracking).
  */
 export class PiAgent extends BaseAgent {
+  private lastPreToolUseSnapshot: {
+    requestId: string;
+    toolName: string;
+    toolCallId?: string;
+    rawInput: Record<string, unknown>;
+    postCheckInput?: Record<string, unknown>;
+    stage: string;
+    schemaSummary?: string;
+  } | null = null;
+
   protected backendName = 'Craft Agents Backend';
 
   // ============================================================
@@ -1074,14 +1120,45 @@ export class PiAgent extends BaseAgent {
       // Fire PostToolUse / PostToolUseFailure hook events (fire-and-forget)
       if (agentEvent.type === 'tool_result') {
         const hookEvent = agentEvent.isError ? 'PostToolUseFailure' : 'PostToolUse';
+        const toolName = agentEvent.toolName ?? (event.toolName as string) ?? 'unknown';
+        const toolResultText = typeof agentEvent.result === 'string' ? agentEvent.result : undefined;
         this.emitAutomationEvent(hookEvent, {
           hook_event_name: hookEvent,
-          tool_name: agentEvent.toolName ?? (event.toolName as string) ?? 'unknown',
+          tool_name: toolName,
           tool_input: agentEvent.input,
           ...(agentEvent.isError
-            ? { error: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }
-            : { tool_response: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }),
+            ? { error: toolResultText }
+            : { tool_response: toolResultText }),
         });
+
+        if (agentEvent.isError && toolResultText && isToolValidationFailureMessage(toolResultText)) {
+          const sessionId = this.config.session?.id || this._sessionId;
+          const toolCallId = agentEvent.toolUseId;
+          const toolNameFromMessage = toolResultText.match(/Validation failed for tool "([^"]+)"/)?.[1];
+          const effectiveToolName = toolNameFromMessage ?? toolName;
+          const promptSnippet = typeof this.currentUserMessage === 'string' && this.currentUserMessage.trim()
+            ? compactWhitespace(this.currentUserMessage).slice(0, 160)
+            : undefined;
+          const validationCount = updateMainProcessToolValidationCount(effectiveToolName, 'sdk-tool-result-validation');
+          persistStructuredMainProcessToolValidationFailure(
+            {
+              sessionId,
+              toolCallId,
+              toolName: effectiveToolName,
+              sourceLayer: 'sdk-tool-result-validation',
+              failureClass: classifyToolValidationFailure(toolResultText),
+              category: 'tool-validation',
+              validationCount,
+              stage: 'tool-result',
+              message: toolResultText,
+            },
+            {
+              arguments: agentEvent.input ? JSON.stringify(agentEvent.input) : undefined,
+              rawError: toolResultText,
+              promptSnippet,
+            },
+          );
+        }
       }
 
       this.eventQueue.enqueue(agentEvent);
@@ -1105,6 +1182,17 @@ export class PiAgent extends BaseAgent {
   }): Promise<void> {
     const { requestId, toolName, toolCallId, input } = req;
     const debugSessionId = this.config.session?.id || this._sessionId;
+    const sessionToolDef = getSessionToolProxyDefs().find(def => def.name === toolName);
+    const proxyToolDef = this.mcpPool?.getProxyToolDefs().find(def => def.name === toolName);
+    const schemaSummary = summarizeSchema((sessionToolDef?.inputSchema ?? proxyToolDef?.inputSchema) as Record<string, unknown> | undefined);
+    this.lastPreToolUseSnapshot = {
+      requestId,
+      toolName,
+      toolCallId,
+      rawInput: { ...(input ?? {}) },
+      stage: 'pre-tool-use-request',
+      schemaSummary,
+    };
     this.debug(`PreToolUse request from subprocess: ${toolName} (${requestId}, sessionId=${debugSessionId})`);
     if (process.env.CRAFT_DEBUG_TOOL_TITLES === '1') {
       this.debug(`[tool-title-debug][main] pre_tool_use payload ${toolName} (${toolCallId ?? 'no-call-id'}, sessionId=${debugSessionId}) keys=${Object.keys(input ?? {}).sort().join(',') || '∅'} hasDisplayName=${typeof input._displayName === 'string' ? 1 : 0} hasIntent=${typeof input._intent === 'string' ? 1 : 0}`);
@@ -1194,6 +1282,11 @@ export class PiAgent extends BaseAgent {
             this.debug(`[tool-args-debug][main] native_pre_tool_use_response tool=${toolName} requestId=${requestId} action=allow sessionId=${debugSessionId} path=${JSON.stringify((input as Record<string, unknown>).path ?? null)} file_path=${JSON.stringify((input as Record<string, unknown>).file_path ?? null)} command=${JSON.stringify((input as Record<string, unknown>).command ?? null)}`);
           }
         }
+        this.lastPreToolUseSnapshot = {
+          ...(this.lastPreToolUseSnapshot ?? { requestId, toolName, rawInput: { ...(input ?? {}) }, stage: 'pre-tool-use-request' }),
+          postCheckInput: { ...(input ?? {}) },
+          stage: 'pre-tool-use-allow',
+        };
         this.send({ type: 'pre_tool_use_response', requestId, action: 'allow' });
         return;
 
@@ -1207,6 +1300,11 @@ export class PiAgent extends BaseAgent {
             this.debug(`[tool-args-debug][main] native_pre_tool_use_response tool=${toolName} requestId=${requestId} action=modify sessionId=${debugSessionId} path=${JSON.stringify((checkResult.input as Record<string, unknown>).path ?? null)} file_path=${JSON.stringify((checkResult.input as Record<string, unknown>).file_path ?? null)} command=${JSON.stringify((checkResult.input as Record<string, unknown>).command ?? null)}`);
           }
         }
+        this.lastPreToolUseSnapshot = {
+          ...(this.lastPreToolUseSnapshot ?? { requestId, toolName, rawInput: { ...(input ?? {}) }, stage: 'pre-tool-use-request' }),
+          postCheckInput: { ...(checkResult.input ?? {}) },
+          stage: 'pre-tool-use-modify',
+        };
         this.send({ type: 'pre_tool_use_response', requestId, action: 'modify', input: checkResult.input });
         return;
 
@@ -1397,25 +1495,36 @@ export class PiAgent extends BaseAgent {
             ? normalizedArgs.tool_call_id
             : undefined;
         const toolNameFromMessage = errorMessage.match(/Validation failed for tool "([^"]+)"/)?.[1];
+        const effectiveToolName = toolNameFromMessage ?? request.toolName;
         const promptSnippet = typeof this.currentUserMessage === 'string' && this.currentUserMessage.trim()
           ? compactWhitespace(this.currentUserMessage).slice(0, 160)
           : undefined;
-        persistMainProcessToolValidationFailure(formatMainProcessToolValidationContext(
+        const validationCount = updateMainProcessToolValidationCount(effectiveToolName, 'main-process-tool-router');
+        const sessionToolDef = getSessionToolProxyDefs().find(def => def.name === request.toolName);
+        const proxyToolDef = this.mcpPool?.getProxyToolDefs().find(def => def.name === request.toolName);
+        persistStructuredMainProcessToolValidationFailure(
           {
             sessionId,
             requestId: request.requestId,
             toolCallId,
-            toolName: toolNameFromMessage ?? request.toolName,
+            toolName: effectiveToolName,
             sourceLayer: 'main-process-tool-router',
+            failureClass: classifyToolValidationFailure(errorMessage),
             category: 'tool-validation',
+            validationCount,
+            schemaSummary: this.lastPreToolUseSnapshot?.schemaSummary ?? summarizeSchema((sessionToolDef?.inputSchema ?? proxyToolDef?.inputSchema) as Record<string, unknown> | undefined),
+            stage: this.lastPreToolUseSnapshot?.stage ?? 'tool-execute-route',
             message: errorMessage,
           },
           {
             arguments: JSON.stringify(normalizedArgs),
+            rawArguments: JSON.stringify(request.args ?? {}),
+            preToolUseRawInput: this.lastPreToolUseSnapshot ? JSON.stringify(this.lastPreToolUseSnapshot.rawInput) : undefined,
+            preToolUsePostCheckInput: this.lastPreToolUseSnapshot?.postCheckInput ? JSON.stringify(this.lastPreToolUseSnapshot.postCheckInput) : undefined,
             rawError: errorMessage,
             promptSnippet,
           },
-        ));
+        );
       }
       this.send({
         type: 'tool_execute_response',

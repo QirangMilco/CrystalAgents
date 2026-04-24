@@ -22,6 +22,8 @@ interface StatusIconProps {
   icon?: string
   /** Workspace ID for loading local icons */
   workspaceId: string
+  /** Workspace data directory name (e.g. .crystal-agent) */
+  workspaceDataDir: string
   /** Size variant (default: 'sm' - statuses are typically small) */
   size?: IconSize
   /** Additional className */
@@ -34,19 +36,24 @@ interface StatusIconProps {
 
 export function resolveStatusIconSource(
   statusId: string,
+  workspaceDataDir: string,
   icon?: string
-): { iconPath?: string; iconValue?: string; iconFileName?: string } {
+): { iconPath?: string; iconValue?: string; iconFileName?: string; iconDir?: string } {
   const trimmedIcon = typeof icon === 'string' ? icon.trim() : undefined
+
+  const iconDir = `${workspaceDataDir}/statuses/icons`
 
   if (trimmedIcon && LOCAL_STATUS_ICON_FILENAME_PATTERN.test(trimmedIcon)) {
     return {
-      iconPath: `statuses/icons/${trimmedIcon}`,
+      iconPath: `${iconDir}/${trimmedIcon}`,
+      iconDir,
     }
   }
 
   return {
     iconValue: trimmedIcon,
     iconFileName: statusId,
+    iconDir,
   }
 }
 
@@ -54,18 +61,19 @@ export function StatusIcon({
   statusId,
   icon,
   workspaceId,
+  workspaceDataDir,
   size = 'sm',
   className,
   chromeless,
   bare,
 }: StatusIconProps) {
-  const { iconPath, iconValue, iconFileName } = resolveStatusIconSource(statusId, icon)
+  const { iconPath, iconValue, iconFileName, iconDir } = resolveStatusIconSource(statusId, workspaceDataDir, icon)
   const resolved = useEntityIcon({
     workspaceId,
     entityType: 'status',
     identifier: statusId,
     iconPath,
-    iconDir: 'statuses/icons',
+    iconDir,
     iconValue,
     // Status icons use {statusId}.ext naming (not icon.ext)
     iconFileName,
