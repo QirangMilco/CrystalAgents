@@ -36,11 +36,20 @@ function getElectronLog(): { info?: (message: string) => void } | null {
     return (electronLog as { info?: (message: string) => void } | null) ?? null;
   }
   electronLogChecked = true;
+
+  if (detectEnvironment() !== 'electron-main') {
+    electronLog = null;
+    return null;
+  }
+
   try {
     // Optional dependency - only available in Electron main process.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const loaded = require('electron-log/main');
-    electronLog = loaded?.default ?? loaded ?? null;
+    // Use indirect require so Vite renderer dependency scanning does not try to resolve electron-log/main.
+    const nodeRequire = Function('return typeof require !== "undefined" ? require : undefined')() as
+      | ((id: string) => unknown)
+      | undefined;
+    const loaded = nodeRequire?.('electron-log/main') as { default?: unknown } | unknown;
+    electronLog = (loaded as { default?: unknown })?.default ?? loaded ?? null;
   } catch {
     electronLog = null;
   }

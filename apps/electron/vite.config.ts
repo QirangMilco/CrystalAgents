@@ -62,8 +62,8 @@ export default defineConfig({
     dedupe: ['react', 'react-dom']
   },
   optimizeDeps: {
-    include: ['react', 'react-dom', 'jotai', 'pdfjs-dist'],
-    exclude: ['@craft-agent/ui'],
+    include: ['react', 'react-dom', 'jotai'],
+    exclude: ['@craft-agent/ui', 'pdfjs-dist'],
     esbuildOptions: {
       supported: { 'top-level-await': true },
       target: 'esnext'
