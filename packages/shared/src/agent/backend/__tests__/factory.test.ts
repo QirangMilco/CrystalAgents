@@ -285,6 +285,12 @@ describe('phase4 backend abstraction APIs', () => {
 
     expect(resolveSetupTestConnectionHint({
       provider: 'pi',
+      baseUrl: 'https://responses-proxy.internal/v1',
+      customEndpoint: { api: 'openai-responses' },
+    })).toEqual({ providerType: 'pi_compat', piAuthProvider: 'openai', customEndpoint: { api: 'openai-responses' } });
+
+    expect(resolveSetupTestConnectionHint({
+      provider: 'pi',
       baseUrl: 'https://my-anthropic-proxy.internal/v1',
       customEndpoint: { api: 'anthropic-messages' },
     })).toEqual({ providerType: 'pi_compat', piAuthProvider: 'anthropic', customEndpoint: { api: 'anthropic-messages' } });

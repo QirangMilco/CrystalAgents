@@ -107,17 +107,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       }
 
       const customEndpoint = hasConfiguredBaseUrl ? setup.customEndpoint : undefined
-      const normalizedCustomEndpoint = customEndpoint
-        ? {
-            ...customEndpoint,
-            api: ((customEndpoint as { api?: string }).api === 'openai-responses'
-              ? 'openai-completions'
-              : customEndpoint.api),
-          }
-        : undefined
-      const isCustomEndpointCompat = !!normalizedCustomEndpoint
-      if (normalizedCustomEndpoint) {
-        updates.customEndpoint = normalizedCustomEndpoint
+      const isCustomEndpointCompat = !!customEndpoint
+      if (customEndpoint) {
+        updates.customEndpoint = customEndpoint
         // Route custom OpenAI/Anthropic-compatible endpoints through PiAgent.
         updates.providerType = 'pi_compat'
         // Local loopback endpoints (Ollama, LM Studio) don't need API keys.
@@ -131,7 +123,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
           updates.piAuthProvider = undefined
         } else {
           // Remote custom endpoints: keep provider hint in lockstep with selected protocol toggle.
-          updates.piAuthProvider = normalizedCustomEndpoint.api === 'anthropic-messages' ? 'anthropic' : 'openai'
+          updates.piAuthProvider = customEndpoint.api === 'anthropic-messages' ? 'anthropic' : 'openai'
         }
       } else if (setup.baseUrl !== undefined) {
         // Base URL was explicitly updated without custom protocol config.

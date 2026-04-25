@@ -114,4 +114,16 @@ describe('updateLlmConnection – customEndpoint', () => {
     const conn = readConnection('custom-compat')
     expect(conn.customEndpoint).toEqual({ api: 'anthropic-messages' })
   })
+
+  it('preserves openai-responses customEndpoint protocol when updated', () => {
+    const { runUpdate, readConnection } = setup([
+      makeConnection({ customEndpoint: { api: 'openai-completions' } }),
+    ])
+
+    const ok = runUpdate('custom-compat', { customEndpoint: { api: 'openai-responses' } })
+    expect(ok).toBe(true)
+
+    const conn = readConnection('custom-compat')
+    expect(conn.customEndpoint).toEqual({ api: 'openai-responses' })
+  })
 })

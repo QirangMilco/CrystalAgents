@@ -165,6 +165,7 @@ function parseModelList(value: string): string[] {
 
 function normalizeCustomApi(api?: string): CustomEndpointApi {
   if (api === 'anthropic-messages') return 'anthropic-messages'
+  if (api === 'openai-responses') return 'openai-responses'
   return 'openai-completions'
 }
 
@@ -512,8 +513,9 @@ export function ApiKeyInput({
             isDisabled && "opacity-50 pointer-events-none"
           )}>
             {([
-              { value: 'openai-completions' as const, label: 'OpenAI Compatible' },
-              { value: 'anthropic-messages' as const, label: 'Anthropic Compatible' },
+              { value: 'openai-completions' as const, label: 'OpenAI Chat Completions' },
+              { value: 'openai-responses' as const, label: 'OpenAI Responses' },
+              { value: 'anthropic-messages' as const, label: 'Anthropic Messages' },
             ]).map(({ value, label }) => (
               <button
                 key={value}
