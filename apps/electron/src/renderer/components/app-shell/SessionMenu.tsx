@@ -115,7 +115,7 @@ export function SessionMenu({
       toast.success(t('toast.linkCopied'), {
         description: result.url,
         action: {
-          label: 'Open',
+          label: t('sendToWorkspace.open'),
           onClick: () => window.electronAPI.openUrl(result.url!),
         },
       })

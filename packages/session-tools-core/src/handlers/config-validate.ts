@@ -18,27 +18,7 @@ import {
   validateJsonFileHasFields,
   mergeResults,
 } from '../validation.ts';
-import { getSourceConfigPath } from '../source-helpers.ts';
-
-function resolveWorkspaceDataDirName(): string {
-  const fallback = '.craft-agents';
-  const variantPath = process.env.CRAFT_APP_VARIANT_PATH || join(process.cwd(), 'apps', 'electron', 'resources', 'app-variant.json');
-  try {
-    if (!existsSync(variantPath)) return fallback;
-    const variant = JSON.parse(readFileSync(variantPath, 'utf-8')) as { workspaceDataDirName?: unknown };
-    return typeof variant.workspaceDataDirName === 'string' && variant.workspaceDataDirName.trim()
-      ? variant.workspaceDataDirName.trim()
-      : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-const WORKSPACE_DATA_DIR = resolveWorkspaceDataDirName();
-
-function getWorkspaceDataPath(workspaceRootPath: string): string {
-  return join(workspaceRootPath, WORKSPACE_DATA_DIR);
-}
+import { getSourceConfigPath, getWorkspaceDataPath } from '../source-helpers.ts';
 
 export interface ConfigValidateArgs {
   target: 'config' | 'sources' | 'statuses' | 'preferences' | 'permissions' | 'automations' | 'tool-icons' | 'all';

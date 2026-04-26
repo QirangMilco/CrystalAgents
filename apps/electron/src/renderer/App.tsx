@@ -1114,13 +1114,13 @@ export default function App() {
     return session
   }, [addSession, store, syncSessionOptionsFromSession, updateSessionDirect])
 
-  const handleCloneSession = useCallback(async (sessionId: string): Promise<Session> => {
-    const result = await window.electronAPI.cloneSession(sessionId)
+  const handleCloneSession = useCallback(async (sessionId: string, actionId?: string): Promise<Session> => {
+    const result = await window.electronAPI.cloneSession(sessionId, actionId)
     return loadCreatedSession(result.sessionId)
   }, [loadCreatedSession])
 
-  const handleCreateSessionFromSummary = useCallback(async (sessionId: string): Promise<Session> => {
-    const result = await window.electronAPI.createSessionFromSummary(sessionId)
+  const handleCreateSessionFromSummary = useCallback(async (sessionId: string, actionId?: string): Promise<Session> => {
+    const result = await window.electronAPI.createSessionFromSummary(sessionId, actionId)
     return loadCreatedSession(result.sessionId)
   }, [loadCreatedSession])
 

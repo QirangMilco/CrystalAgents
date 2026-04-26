@@ -10,6 +10,7 @@ import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 import { loadTemplate, validateTemplateData } from '../templates/loader.ts';
 import { renderMustache } from '../templates/mustache.ts';
+import { getSourcePath } from '../source-helpers.ts';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
@@ -36,7 +37,7 @@ export async function handleRenderTemplate(
     return errorResponse('render_template requires dataPath in context.');
   }
 
-  const sourcePath = join(ctx.workspacePath, 'sources', args.source);
+  const sourcePath = getSourcePath(ctx.workspacePath, args.source);
 
   // Validate source exists
   if (!existsSync(sourcePath)) {

@@ -7,7 +7,8 @@
  * messages with real-time streaming, and validating server health.
  */
 
-import { resolve } from 'path'
+import { join, resolve } from 'path'
+import { getWorkspaceDataPath } from '@craft-agent/shared/workspaces'
 import { CliRpcClient } from './client.ts'
 
 // ---------------------------------------------------------------------------
@@ -952,8 +953,9 @@ async function cleanupAutomationArtifacts(
   if (ctx.workspaceRootPath && ctx.createdAutomation) {
     try {
       const { writeFile, unlink } = await import('fs/promises')
-      const configPath = `${ctx.workspaceRootPath}/automations.json`
-      const historyPath = `${ctx.workspaceRootPath}/automations-history.jsonl`
+      const workspaceDataDir = getWorkspaceDataPath(ctx.workspaceRootPath)
+      const configPath = join(workspaceDataDir, 'automations.json')
+      const historyPath = join(workspaceDataDir, 'automations-history.jsonl')
       if (ctx.automationsJsonBackup != null) {
         await writeFile(configPath, ctx.automationsJsonBackup).catch(() => {})
         cleaned.push('automations.json (restored)')
@@ -1352,7 +1354,7 @@ export function getValidateSteps(): ValidateStep[] {
         if (!ctx.createdSessionId || !ctx.workspaceRootPath) return 'skipped (no session or workspace)'
         ctx.createdSkillSlug = '__cli-validate-skill'
         const sourceSlug = ctx.createdSourceSlug ?? 'cat-facts'
-        const skillDir = `${ctx.workspaceRootPath}/skills/${ctx.createdSkillSlug}`
+        const skillDir = join(getWorkspaceDataPath(ctx.workspaceRootPath), 'skills', ctx.createdSkillSlug)
         // Use bash to create the skill file deterministically
         return await waitForSendEvents(client, ctx.createdSessionId,
           `Use the Bash tool to run this exact command:
@@ -1404,8 +1406,9 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       name: 'automation:create',
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId || !ctx.workspaceRootPath) return 'skipped (no session or workspace)'
-        const configPath = `${ctx.workspaceRootPath}/automations.json`
-        const historyPath = `${ctx.workspaceRootPath}/automations-history.jsonl`
+        const workspaceDataDir = getWorkspaceDataPath(ctx.workspaceRootPath)
+        const configPath = join(workspaceDataDir, 'automations.json')
+        const historyPath = join(workspaceDataDir, 'automations-history.jsonl')
         const { readFile, writeFile } = await import('fs/promises')
 
         // Always backup + overwrite with deterministic validation config,
@@ -1586,7 +1589,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       fn: async (client, ctx) => {
         if (!ctx.workspaceRootPath) return 'skipped (no workspace root)'
         const { readFile } = await import('fs/promises')
-        const historyPath = `${ctx.workspaceRootPath}/automations-history.jsonl`
+        const historyPath = join(getWorkspaceDataPath(ctx.workspaceRootPath), 'automations-history.jsonl')
 
         const start = Date.now()
         const deadline = start + 15_000

@@ -1948,7 +1948,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                               {
                                 branchFromMessageId: messageId,
                                 branchFromSessionId: session.id,
-                                name: `Branch of ${session.name || 'Untitled'}`,
+                                name: t('chat.branchName', { name: session.name || t('chat.untitledSession') }),
                                 // Keep branch on the same backend/provider by inheriting parent session settings.
                                 llmConnection: session.llmConnection,
                                 model: session.model,
@@ -1959,10 +1959,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             )
                             navigate(routes.view.allSessions(child.id), { newPanel: resolveBranchNewPanelOption(options) })
                           } catch (error) {
-                            const rawMessage = error instanceof Error ? error.message : 'Failed to create branch'
+                            const rawMessage = error instanceof Error ? error.message : t('toast.unknownError')
                             const message = rawMessage.includes('source and target providers must match')
                               || rawMessage.includes('same provider/backend')
-                              ? 'Branching is only supported within the same provider/backend. Switch this panel connection and try again.'
+                              ? t('chat.branchProviderMismatch')
                               : rawMessage
                             toast.error(t('toast.couldNotCreateBranch'), { description: message })
                           }
@@ -1977,7 +1977,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             })
                           } catch (error) {
                             toast.error(t('toast.couldNotSaveHighlight'), {
-                              description: error instanceof Error ? error.message : 'Unknown error',
+                              description: error instanceof Error ? error.message : t('toast.unknownError'),
                             })
                             throw error
                           }
@@ -1992,7 +1992,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             })
                           } catch (error) {
                             toast.error(t('toast.couldNotRemoveHighlight'), {
-                              description: error instanceof Error ? error.message : 'Unknown error',
+                              description: error instanceof Error ? error.message : t('toast.unknownError'),
                             })
                           }
                         }}
@@ -2007,7 +2007,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             })
                           } catch (error) {
                             toast.error(t('toast.couldNotUpdateHighlight'), {
-                              description: error instanceof Error ? error.message : 'Unknown error',
+                              description: error instanceof Error ? error.message : t('toast.unknownError'),
                             })
                             throw error
                           }

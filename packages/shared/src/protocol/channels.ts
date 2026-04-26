@@ -25,6 +25,7 @@ export const RPC_CHANNELS = {
     CREATE: 'sessions:create',
     CLONE: 'sessions:clone',
     CREATE_FROM_SUMMARY: 'sessions:createFromSummary',
+    CANCEL_ACTION: 'sessions:cancelAction',
     DELETE: 'sessions:delete',
     GET_MESSAGES: 'sessions:getMessages',
     SEND_MESSAGE: 'sessions:sendMessage',

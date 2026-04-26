@@ -11,10 +11,12 @@
  * Run: bun scripts/copy-assets.ts
  */
 
-import { cpSync, copyFileSync, mkdirSync } from 'fs';
+import { cpSync, copyFileSync } from 'fs';
 import { join } from 'path';
+import { getSelectedAppVariantPath } from '../../../packages/session-tools-core/src/utils/app-variant-paths.ts';
 
-const variantPath = process.env.CRAFT_APP_VARIANT_PATH || join('resources', 'app-variant.prod.json');
+const ROOT_DIR = join('..', '..');
+const variantPath = getSelectedAppVariantPath(ROOT_DIR);
 
 // Copy all resources (icons, themes, docs, permissions, tool-icons, etc.)
 cpSync('resources', 'dist/resources', { recursive: true });

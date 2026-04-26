@@ -8,7 +8,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { AlertCircle, Globe, Copy, RefreshCw, Link2Off, Info, CopyPlus, Sparkles, SplitSquareHorizontal } from 'lucide-react'
+import { AlertCircle, Globe, Copy, RefreshCw, Link2Off, Info, CopyPlus, Sparkles, SplitSquareHorizontal, Loader2 } from 'lucide-react'
 import { ChatDisplay, type ChatDisplayHandle } from '@/components/app-shell/ChatDisplay'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
@@ -17,6 +17,8 @@ import { RenameDialog } from '@/components/ui/rename-dialog'
 import { toast } from 'sonner'
 import { PanelHeaderCenterButton } from '@/components/ui/PanelHeaderCenterButton'
 import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { StyledDropdownMenuContent, StyledDropdownMenuItem, StyledDropdownMenuSeparator } from '@/components/ui/styled-dropdown'
 import { useAppShellContext, usePendingPermission, usePendingCredential, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
 import { rendererPerf } from '@/lib/perf'
@@ -427,65 +429,84 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId])
 
-  const [isSessionActionRunning, setIsSessionActionRunning] = React.useState(false)
+  const [sessionAction, setSessionAction] = React.useState<{ type: 'clone' | 'summary'; id: string } | null>(null)
+  const cancelledSessionActionsRef = React.useRef(new Set<string>())
+  const isSessionActionRunning = sessionAction !== null
 
   const handleCloneSession = React.useCallback(async () => {
     if (isSessionActionRunning) return
-    setIsSessionActionRunning(true)
-    const toastId = toast.loading(t('toast.cloningSession'))
+    const actionId = crypto.randomUUID()
+    setSessionAction({ type: 'clone', id: actionId })
     try {
-      const cloned = await onCloneSession(sessionId)
-      toast.success(t('toast.sessionCloned'), { id: toastId })
+      const cloned = await onCloneSession(sessionId, actionId)
+      if (cancelledSessionActionsRef.current.has(actionId)) return
+      toast.success(t('toast.sessionCloned'))
       navigate(routes.view.allSessions(cloned.id))
     } catch (error) {
-      toast.error(t('toast.failedToCloneSession'), {
-        id: toastId,
-        description: error instanceof Error ? error.message : t('toast.unknownError'),
-      })
+      if (!cancelledSessionActionsRef.current.has(actionId)) {
+        toast.error(t('toast.failedToCloneSession'), {
+          description: error instanceof Error ? error.message : t('toast.unknownError'),
+        })
+      }
     } finally {
-      setIsSessionActionRunning(false)
+      cancelledSessionActionsRef.current.delete(actionId)
+      setSessionAction(current => current?.id === actionId ? null : current)
     }
   }, [isSessionActionRunning, onCloneSession, sessionId, t])
 
   const handleCreateSessionFromSummary = React.useCallback(async () => {
     if (isSessionActionRunning) return
-    setIsSessionActionRunning(true)
-    const toastId = toast.loading(t('toast.summarizingSession'))
+    const actionId = crypto.randomUUID()
+    setSessionAction({ type: 'summary', id: actionId })
     try {
-      const summarized = await onCreateSessionFromSummary(sessionId)
-      toast.success(t('toast.summarySessionCreated'), { id: toastId })
+      const summarized = await onCreateSessionFromSummary(sessionId, actionId)
+      if (cancelledSessionActionsRef.current.has(actionId)) return
+      toast.success(t('toast.summarySessionCreated'))
       navigate(routes.view.allSessions(summarized.id))
     } catch (error) {
-      toast.error(t('toast.failedToSummarizeSession'), {
-        id: toastId,
-        description: error instanceof Error ? error.message : t('toast.unknownError'),
-      })
+      if (!cancelledSessionActionsRef.current.has(actionId)) {
+        toast.error(t('toast.failedToSummarizeSession'), {
+          description: error instanceof Error ? error.message : t('toast.unknownError'),
+        })
+      }
     } finally {
-      setIsSessionActionRunning(false)
+      cancelledSessionActionsRef.current.delete(actionId)
+      setSessionAction(current => current?.id === actionId ? null : current)
     }
   }, [isSessionActionRunning, onCreateSessionFromSummary, sessionId, t])
 
+  const handleCancelSessionAction = React.useCallback(() => {
+    if (!sessionAction) return
+    cancelledSessionActionsRef.current.add(sessionAction.id)
+    window.electronAPI.cancelSessionAction(sessionAction.id).catch(() => undefined)
+    setSessionAction(null)
+    toast(t('toast.sessionActionCancelled'))
+  }, [sessionAction, t])
+
   const sessionActionsButton = React.useMemo(() => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <PanelHeaderCenterButton
-          aria-label={t('sessionMenu.sessionActions')}
-          icon={<SplitSquareHorizontal className="h-4 w-4" />}
-          disabled={isSessionActionRunning || session?.isProcessing || sessionMeta?.isProcessing}
-        />
-      </DropdownMenuTrigger>
-      <StyledDropdownMenuContent align="end" sideOffset={8}>
-        <StyledDropdownMenuItem onClick={handleCloneSession} disabled={isSessionActionRunning}>
-          <CopyPlus className="h-3.5 w-3.5" />
-          <span className="flex-1">{t('sessionMenu.cloneSession')}</span>
-        </StyledDropdownMenuItem>
-        <StyledDropdownMenuItem onClick={handleCreateSessionFromSummary} disabled={isSessionActionRunning}>
-          <Sparkles className="h-3.5 w-3.5" />
-          <span className="flex-1">{t('sessionMenu.startFromSummary')}</span>
-        </StyledDropdownMenuItem>
-      </StyledDropdownMenuContent>
-    </DropdownMenu>
-  ), [handleCloneSession, handleCreateSessionFromSummary, isSessionActionRunning, session?.isProcessing, sessionMeta?.isProcessing, t])
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <PanelHeaderCenterButton
+            aria-label={t('sessionMenu.sessionActions')}
+            icon={<SplitSquareHorizontal className="h-4 w-4" />}
+            disabled={isSessionActionRunning || session?.isProcessing || sessionMeta?.isProcessing}
+          />
+        </DropdownMenuTrigger>
+        <StyledDropdownMenuContent align="end" sideOffset={8}>
+          <StyledDropdownMenuItem onClick={handleCloneSession} disabled={isSessionActionRunning}>
+            <CopyPlus className="h-3.5 w-3.5" />
+            <span className="flex-1">{t('sessionMenu.cloneSession')}</span>
+          </StyledDropdownMenuItem>
+          <StyledDropdownMenuItem onClick={handleCreateSessionFromSummary} disabled={isSessionActionRunning}>
+            <Sparkles className="h-3.5 w-3.5" />
+            <span className="flex-1">{t('sessionMenu.startFromSummary')}</span>
+          </StyledDropdownMenuItem>
+        </StyledDropdownMenuContent>
+      </DropdownMenu>
+      <SessionActionProgressDialog action={sessionAction} onCancel={handleCancelSessionAction} />
+    </>
+  ), [handleCancelSessionAction, handleCloneSession, handleCreateSessionFromSummary, isSessionActionRunning, session?.isProcessing, sessionAction, sessionMeta?.isProcessing, t])
 
   // Share button with dropdown menu rendered in PanelHeader actions slot
   const shareButton = React.useMemo(() => (
@@ -753,5 +774,44 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     </>
   )
 })
+
+function SessionActionProgressDialog({ action, onCancel }: {
+  action: { type: 'clone' | 'summary'; id: string } | null
+  onCancel: () => void
+}) {
+  const { t } = useTranslation()
+  const isOpen = action !== null
+  const isClone = action?.type === 'clone'
+
+  return (
+    <Dialog open={isOpen} onOpenChange={() => {}}>
+      <DialogContent
+        className="sm:max-w-sm"
+        showCloseButton={false}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onPointerDownOutside={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-info" />
+            {t(isClone ? 'sessionMenu.cloneSessionProgressTitle' : 'sessionMenu.startFromSummaryProgressTitle')}
+          </DialogTitle>
+          <DialogDescription>
+            {t(isClone ? 'sessionMenu.cloneSessionProgressDescription' : 'sessionMenu.startFromSummaryProgressDescription')}
+          </DialogDescription>
+        </DialogHeader>
+        <p className="rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {t('sessionMenu.sessionActionBusyNotice')}
+        </p>
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>
+            {t('common.cancel')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 export default ChatPage

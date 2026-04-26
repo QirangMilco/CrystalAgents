@@ -183,12 +183,17 @@ export interface ISessionManager {
   /**
    * Clone a session inside the same workspace without mutating the source session.
    */
-  cloneSession(sessionId: string, workspaceId: string): Promise<import('@craft-agent/shared/protocol').CloneSessionResult>
+  cloneSession(sessionId: string, workspaceId: string, actionId?: string): Promise<import('@craft-agent/shared/protocol').CloneSessionResult>
 
   /**
    * Create a new session seeded from a temporary source-session summary.
    */
-  createSessionFromSummary(sessionId: string, workspaceId: string): Promise<import('@craft-agent/shared/protocol').CreateSessionFromSummaryResult>
+  createSessionFromSummary(sessionId: string, workspaceId: string, actionId?: string): Promise<import('@craft-agent/shared/protocol').CreateSessionFromSummaryResult>
+
+  /**
+   * Cancel a foreground session action such as clone or summary-based session creation.
+   */
+  cancelSessionAction(actionId: string): Promise<{ cancelled: boolean }>
 
   // ---------------------------------------------------------------------------
   // Utilities

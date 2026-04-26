@@ -8,11 +8,11 @@ import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync, copyFile
 import { join, basename } from "path";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
+import { getRepoAppVariantDevPath, getSelectedAppVariantPath } from "../packages/session-tools-core/src/utils/app-variant-paths.ts";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ELECTRON_DIR, "dist");
-const DEFAULT_VARIANT_PATH = join(ELECTRON_DIR, "resources", "app-variant.prod.json");
 
 // Replace grammY's bundled polyfills (node-fetch@2 + abort-controller@3) with
 // native Node globals. esbuild otherwise renames the polyfill's `class
@@ -90,7 +90,7 @@ function detectInstance(): void {
     process.env.CRAFT_VITE_PORT = `${instanceNum}173`;
     process.env.CRAFT_CONFIG_DIR = join(process.env.HOME || "", `.craft-agent-${instanceNum}`);
     process.env.CRAFT_DEEPLINK_SCHEME = `craftagents${instanceNum}`;
-    process.env.CRAFT_APP_VARIANT_PATH = join(ROOT_DIR, 'apps', 'electron', 'resources', 'app-variant.dev.json');
+    process.env.CRAFT_APP_VARIANT_PATH = getRepoAppVariantDevPath(ROOT_DIR);
     process.env.CRAFT_ELECTRON_USER_DATA_DIR = join(process.env.CRAFT_CONFIG_DIR, 'electron');
     console.log(`🔢 Instance ${instanceNum} detected: port=${process.env.CRAFT_VITE_PORT}, config=${process.env.CRAFT_CONFIG_DIR}`);
   }
@@ -190,7 +190,7 @@ function cleanViteCache(): void {
 }
 
 function syncSelectedVariant(): void {
-  const selectedVariantPath = process.env.CRAFT_APP_VARIANT_PATH || DEFAULT_VARIANT_PATH;
+  const selectedVariantPath = getSelectedAppVariantPath(ROOT_DIR);
 
   for (const baseDir of [join(ELECTRON_DIR, "resources"), join(ELECTRON_DIR, "dist/resources")]) {
     mkdirSync(baseDir, { recursive: true });
@@ -320,7 +320,7 @@ function getElectronEnv(): Record<string, string> {
     CRAFT_CONFIG_DIR: process.env.CRAFT_CONFIG_DIR || "",
     CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || "craftagents",
     CRAFT_INSTANCE_NUMBER: process.env.CRAFT_INSTANCE_NUMBER || "",
-    CRAFT_APP_VARIANT_PATH: process.env.CRAFT_APP_VARIANT_PATH || join(ROOT_DIR, 'apps', 'electron', 'resources', 'app-variant.dev.json'),
+    CRAFT_APP_VARIANT_PATH: process.env.CRAFT_APP_VARIANT_PATH || getRepoAppVariantDevPath(ROOT_DIR),
     CRAFT_ELECTRON_USER_DATA_DIR: process.env.CRAFT_ELECTRON_USER_DATA_DIR || join(process.env.CRAFT_CONFIG_DIR || join(process.env.HOME || '', '.craft-agent-dev'), 'electron'),
   };
 }

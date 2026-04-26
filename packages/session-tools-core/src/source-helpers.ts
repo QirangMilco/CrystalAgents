@@ -8,25 +8,32 @@
 
 import { existsSync, readFileSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveRuntimeAppVariantPath } from './utils/app-variant-paths.ts';
 import type { SourceConfig } from './types.ts';
 
-function resolveWorkspaceDataDirName(): string {
-  const fallback = '.craft-agents';
-  const variantPath = process.env.CRAFT_APP_VARIANT_PATH || join(process.cwd(), 'apps', 'electron', 'resources', 'app-variant.json');
+function readWorkspaceDataDirNameFromVariant(variantPath: string): string | null {
   try {
-    if (!existsSync(variantPath)) return fallback;
+    if (!existsSync(variantPath)) return null;
     const variant = JSON.parse(readFileSync(variantPath, 'utf-8')) as { workspaceDataDirName?: unknown };
     return typeof variant.workspaceDataDirName === 'string' && variant.workspaceDataDirName.trim()
       ? variant.workspaceDataDirName.trim()
-      : fallback;
+      : null;
   } catch {
-    return fallback;
+    return null;
   }
 }
 
-const WORKSPACE_DATA_DIR = resolveWorkspaceDataDirName();
+function resolveWorkspaceDataDirName(): string {
+  const fallback = '.craft-agents';
+  const variantPath = resolveRuntimeAppVariantPath();
+  if (!variantPath) return fallback;
 
-function getWorkspaceDataPath(workspaceRootPath: string): string {
+  return readWorkspaceDataDirNameFromVariant(variantPath) ?? fallback;
+}
+
+export const WORKSPACE_DATA_DIR = resolveWorkspaceDataDirName();
+
+export function getWorkspaceDataPath(workspaceRootPath: string): string {
   return join(workspaceRootPath, WORKSPACE_DATA_DIR);
 }
 

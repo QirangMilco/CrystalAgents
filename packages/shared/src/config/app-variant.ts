@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
-import { getBundledAssetsDir } from '../utils/paths.ts';
+import { readFileSync } from 'fs';
+import { resolveRuntimeAppVariantPath } from './app-variant-paths.ts';
 
 export interface AppVariantConfig {
   appId: string;
@@ -60,44 +59,7 @@ const DEFAULT_APP_VARIANT: AppVariantConfig = {
 let cachedVariant: AppVariantConfig | null = null;
 
 function resolveVariantPath(): string | null {
-  const fromEnv = process.env.CRAFT_APP_VARIANT_PATH;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-
-  // Packaged runtime candidate: process.resourcesPath is available before main bootstrap logic.
-  // Example: /Applications/Crystal Agents.app/Contents/Resources
-  const electronResourcesPath = (process as { resourcesPath?: string }).resourcesPath;
-  if (electronResourcesPath) {
-    const packagedCandidates = [
-      join(electronResourcesPath, 'app', 'resources', 'app-variant.json'),
-      join(electronResourcesPath, 'app', 'dist', 'resources', 'app-variant.json'),
-    ];
-    for (const packagedPath of packagedCandidates) {
-      if (existsSync(packagedPath)) return packagedPath;
-    }
-  }
-
-  // Secondary packaged runtime candidate from bootstrap env (when available).
-  const resourcesBase = process.env.CRAFT_RESOURCES_BASE;
-  if (resourcesBase) {
-    const packagedCandidates = [
-      join(resourcesBase, 'resources', 'app-variant.json'),
-      join(resourcesBase, 'dist', 'resources', 'app-variant.json'),
-    ];
-    for (const packagedPath of packagedCandidates) {
-      if (existsSync(packagedPath)) return packagedPath;
-    }
-  }
-
-  const bundledDir = getBundledAssetsDir('.');
-  if (bundledDir) {
-    const bundledPath = join(bundledDir, 'app-variant.json');
-    if (existsSync(bundledPath)) return bundledPath;
-  }
-
-  const devPath = join(process.cwd(), 'apps', 'electron', 'resources', 'app-variant.json');
-  if (existsSync(devPath)) return devPath;
-
-  return null;
+  return resolveRuntimeAppVariantPath();
 }
 
 function parseVariantFile(path: string): Partial<AppVariantConfig> | null {

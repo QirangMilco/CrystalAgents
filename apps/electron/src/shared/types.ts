@@ -222,8 +222,9 @@ export interface ElectronAPI {
   markAllSessionsRead(workspaceId: string): Promise<void>
   getSessionMessages(sessionId: string): Promise<Session | null>
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
-  cloneSession(sessionId: string): Promise<CloneSessionResult>
-  createSessionFromSummary(sessionId: string): Promise<CreateSessionFromSummaryResult>
+  cloneSession(sessionId: string, actionId?: string): Promise<CloneSessionResult>
+  createSessionFromSummary(sessionId: string, actionId?: string): Promise<CreateSessionFromSummaryResult>
+  cancelSessionAction(actionId: string): Promise<{ cancelled: boolean }>
   deleteSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>

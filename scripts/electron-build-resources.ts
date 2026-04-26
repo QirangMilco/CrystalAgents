@@ -4,12 +4,12 @@
 
 import { existsSync, cpSync, mkdirSync, copyFileSync } from "fs";
 import { join } from "path";
+import { getSelectedAppVariantPath } from "../packages/session-tools-core/src/utils/app-variant-paths.ts";
 
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
-const DEFAULT_VARIANT_PATH = join(ELECTRON_DIR, "resources", "app-variant.prod.json");
-const SELECTED_VARIANT_PATH = process.env.CRAFT_APP_VARIANT_PATH || DEFAULT_VARIANT_PATH;
+const SELECTED_VARIANT_PATH = getSelectedAppVariantPath(ROOT_DIR);
 
 const srcDir = join(ELECTRON_DIR, "resources");
 const destDir = join(ELECTRON_DIR, "dist/resources");

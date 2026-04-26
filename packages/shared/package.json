@@ -87,7 +87,6 @@
     "zod": ">=3.0.0"
   },
   "devDependencies": {
-    "@types/shell-quote": "^1.7.5",
-    "@types/uuid": "^11.0.0"
+    "@types/shell-quote": "^1.7.5"
   }
 }

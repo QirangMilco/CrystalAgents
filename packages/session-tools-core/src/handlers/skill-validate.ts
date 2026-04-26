@@ -2,7 +2,7 @@
  * Skill Validate Handler
  *
  * Validates a skill's SKILL.md file for correct format and required fields.
- * Resolves skills from all three tiers: project > workspace > global.
+ * Resolves skills from all three tiers: project > workspace data dir > global.
  *
  * The handler resolves the session's workingDirectory on demand from the
  * persisted session.jsonl header — no construction-time propagation needed.
@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { errorResponse } from '../response.ts';
-import { resolveSessionWorkingDirectory } from '../source-helpers.ts';
+import { getSkillMdPath, resolveSessionWorkingDirectory } from '../source-helpers.ts';
 import {
   validateSlug,
   validateSkillContent,
@@ -26,7 +26,7 @@ export interface SkillValidateArgs {
 }
 
 /**
- * Resolve the SKILL.md path by checking all three tiers (project > workspace > global).
+ * Resolve the SKILL.md path by checking all three tiers (project > workspace data dir > global).
  * Returns the first match, or null if not found anywhere.
  */
 function resolveSkillMdPath(
@@ -42,8 +42,8 @@ function resolveSkillMdPath(
     }
   }
 
-  // 2. Workspace-level (medium priority): {workspace}/skills/{slug}/SKILL.md
-  const workspacePath = join(ctx.workspacePath, 'skills', slug, 'SKILL.md');
+  // 2. Workspace-level (medium priority): {workspace}/{workspaceDataDirName}/skills/{slug}/SKILL.md
+  const workspacePath = getSkillMdPath(ctx.workspacePath, slug);
   if (ctx.fs.exists(workspacePath)) {
     return { path: workspacePath, tier: 'workspace' };
   }
@@ -62,7 +62,7 @@ function resolveSkillMdPath(
  *
  * 1. Validate slug format
  * 2. Resolve workingDirectory from ctx or session header (graceful fallback)
- * 3. Resolve SKILL.md from all three tiers (project > workspace > global)
+ * 3. Resolve SKILL.md from all three tiers (project > workspace data dir > global)
  * 4. Read and validate content (frontmatter + body)
  * 5. Return validation result with warnings if project tier was skipped
  */
@@ -90,7 +90,7 @@ export async function handleSkillValidate(
   if (!resolved) {
     const searchedPaths = [
       workingDirectory ? `  - ${join(workingDirectory, '.agents', 'skills', skillSlug, 'SKILL.md')} (project)` : null,
-      `  - ${join(ctx.workspacePath, 'skills', skillSlug, 'SKILL.md')} (workspace)`,
+      `  - ${getSkillMdPath(ctx.workspacePath, skillSlug)} (workspace)`,
       `  - ${join(homedir(), '.agents', 'skills', skillSlug, 'SKILL.md')} (global)`,
     ].filter(Boolean).join('\n');
 

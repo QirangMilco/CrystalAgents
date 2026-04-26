@@ -13,7 +13,7 @@
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Cloud, CloudOff, Send } from 'lucide-react'
+import { Cloud, CloudOff, Loader2, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -53,6 +53,7 @@ export function SendToWorkspaceDialog({
   const { t } = useTranslation()
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
   const [isTransferring, setIsTransferring] = useState(false)
+  const [activeTransferIndex, setActiveTransferIndex] = useState(0)
   // Normalized overall progress (0–1) across all sessions in the batch
   const [overallProgress, setOverallProgress] = useState(0)
   const workspaceIconMap = useWorkspaceIcons(workspaces)
@@ -124,15 +125,16 @@ export function SendToWorkspaceDialog({
     if (!targetWorkspace?.remoteServer) return
 
     setIsTransferring(true)
+    setActiveTransferIndex(0)
+    setOverallProgress(0)
     const targetName = targetWorkspace.name
     const count = sessionIds.length
-
-    const toastId = toast.loading(t('sendToWorkspace.sending', { count, target: targetName }))
 
     try {
       const newSessionIds: string[] = []
 
       for (let i = 0; i < sessionIds.length; i++) {
+        setActiveTransferIndex(i)
         const sessionId = sessionIds[i]
         // Main process handles export + summary + transport (chunked for large bundles)
         const result = await window.electronAPI.transferSessionToWorkspace(sessionId, selectedWorkspaceId, i, sessionIds.length)
@@ -140,7 +142,6 @@ export function SendToWorkspaceDialog({
       }
 
       toast.success(t('sendToWorkspace.sent', { count, target: targetName }), {
-        id: toastId,
         action: onTransferComplete ? {
           label: t('sendToWorkspace.open'),
           onClick: () => onTransferComplete(selectedWorkspaceId, newSessionIds),
@@ -150,13 +151,14 @@ export function SendToWorkspaceDialog({
       onOpenChange(false)
       setSelectedWorkspaceId(null)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
+      const message = error instanceof Error ? error.message : t('toast.unknownError')
       toast.error(t('sendToWorkspace.failedToSend', { count }), {
-        id: toastId,
         description: message,
       })
     } finally {
       setIsTransferring(false)
+      setActiveTransferIndex(0)
+      setOverallProgress(0)
     }
   }, [selectedWorkspaceId, sessionIds, workspaces, onOpenChange, onTransferComplete])
 
@@ -169,80 +171,102 @@ export function SendToWorkspaceDialog({
         if (!isOpen) setSelectedWorkspaceId(null)
       }
     }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Send className="h-4 w-4" />
-            {t("sendToWorkspace.title")}
-          </DialogTitle>
-          <DialogDescription>
-            {t("sendToWorkspace.description", { count })}
-          </DialogDescription>
-        </DialogHeader>
-
-        {/* Workspace list — remote only */}
-        <div className="flex flex-col gap-1 max-h-64 overflow-y-auto py-1">
-          {remoteWorkspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground px-2 py-4 text-center">
-              {t("sendToWorkspace.noRemoteWorkspaces")}
-            </p>
-          ) : (
-            remoteWorkspaces.map(workspace => {
-              const isSelected = selectedWorkspaceId === workspace.id
-              const healthStatus = remoteHealthMap.get(workspace.id)
-              const isDisconnected = healthStatus === 'error'
-              const isChecking = healthStatus === 'checking'
-
-              return (
-                <button
-                  key={workspace.id}
-                  type="button"
-                  disabled={isTransferring || isDisconnected}
-                  onClick={() => setSelectedWorkspaceId(workspace.id)}
-                  className={cn(
-                    'flex items-center gap-2 w-full px-2 py-2 rounded-md text-left text-sm transition-colors',
-                    'hover:bg-foreground/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                    isSelected && 'bg-foreground/10 ring-1 ring-foreground/15',
-                    isDisconnected && 'opacity-50 cursor-not-allowed hover:bg-transparent',
-                  )}
-                >
-                  <CrossfadeAvatar
-                    src={workspaceIconMap.get(workspace.id)}
-                    alt={workspace.name}
-                    className="h-5 w-5 rounded-full ring-1 ring-border/50 shrink-0"
-                    fallbackClassName="bg-muted text-[10px] rounded-full"
-                    fallback={workspace.name?.charAt(0) || 'W'}
-                  />
-                  <span className="flex-1 truncate">{workspace.name}</span>
-                  {isDisconnected ? (
-                    <CloudOff className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
-                  ) : (
-                    <Cloud className={cn(
-                      'h-3.5 w-3.5 shrink-0',
-                      isChecking ? 'text-muted-foreground/30 animate-pulse' : 'text-muted-foreground',
-                    )} />
-                  )}
-                </button>
-              )
-            })
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isTransferring}
-          >
-            Cancel
-          </Button>
-          <TransferButton
-            onClick={handleTransfer}
-            disabled={!selectedWorkspaceId || isTransferring}
-            isTransferring={isTransferring}
+      <DialogContent
+        className="sm:max-w-sm"
+        showCloseButton={!isTransferring}
+        onEscapeKeyDown={(event) => {
+          if (isTransferring) event.preventDefault()
+        }}
+        onPointerDownOutside={(event) => {
+          if (isTransferring) event.preventDefault()
+        }}
+        onInteractOutside={(event) => {
+          if (isTransferring) event.preventDefault()
+        }}
+      >
+        {isTransferring ? (
+          <TransferProgressView
+            targetName={workspaces.find(w => w.id === selectedWorkspaceId)?.name ?? ''}
+            count={count}
+            activeIndex={activeTransferIndex}
             progress={overallProgress}
           />
-        </DialogFooter>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Send className="h-4 w-4" />
+                {t("sendToWorkspace.title")}
+              </DialogTitle>
+              <DialogDescription>
+                {t("sendToWorkspace.description", { count })}
+              </DialogDescription>
+            </DialogHeader>
+
+            {/* Workspace list — remote only */}
+            <div className="flex flex-col gap-1 max-h-64 overflow-y-auto py-1">
+              {remoteWorkspaces.length === 0 ? (
+                <p className="text-sm text-muted-foreground px-2 py-4 text-center">
+                  {t("sendToWorkspace.noRemoteWorkspaces")}
+                </p>
+              ) : (
+                remoteWorkspaces.map(workspace => {
+                  const isSelected = selectedWorkspaceId === workspace.id
+                  const healthStatus = remoteHealthMap.get(workspace.id)
+                  const isDisconnected = healthStatus === 'error'
+                  const isChecking = healthStatus === 'checking'
+
+                  return (
+                    <button
+                      key={workspace.id}
+                      type="button"
+                      disabled={isDisconnected}
+                      onClick={() => setSelectedWorkspaceId(workspace.id)}
+                      className={cn(
+                        'flex items-center gap-2 w-full px-2 py-2 rounded-md text-left text-sm transition-colors',
+                        'hover:bg-foreground/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        isSelected && 'bg-foreground/10 ring-1 ring-foreground/15',
+                        isDisconnected && 'opacity-50 cursor-not-allowed hover:bg-transparent',
+                      )}
+                    >
+                      <CrossfadeAvatar
+                        src={workspaceIconMap.get(workspace.id)}
+                        alt={workspace.name}
+                        className="h-5 w-5 rounded-full ring-1 ring-border/50 shrink-0"
+                        fallbackClassName="bg-muted text-[10px] rounded-full"
+                        fallback={workspace.name?.charAt(0) || 'W'}
+                      />
+                      <span className="flex-1 truncate">{workspace.name}</span>
+                      {isDisconnected ? (
+                        <CloudOff className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+                      ) : (
+                        <Cloud className={cn(
+                          'h-3.5 w-3.5 shrink-0',
+                          isChecking ? 'text-muted-foreground/30 animate-pulse' : 'text-muted-foreground',
+                        )} />
+                      )}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+              >
+                {t('common.cancel')}
+              </Button>
+              <TransferButton
+                onClick={handleTransfer}
+                disabled={!selectedWorkspaceId}
+                isTransferring={false}
+                progress={overallProgress}
+              />
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   )
@@ -255,6 +279,7 @@ function TransferButton({ onClick, disabled, isTransferring, progress }: {
   isTransferring: boolean
   progress: number
 }) {
+  const { t } = useTranslation()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const rectRef = useRef<SVGRectElement>(null)
   const [perim, setPerim] = useState(0)
@@ -268,7 +293,7 @@ function TransferButton({ onClick, disabled, isTransferring, progress }: {
   return (
     <div ref={wrapperRef} className="relative">
       <Button onClick={onClick} disabled={disabled}>
-        {isTransferring ? 'Sending...' : 'Send'}
+        {isTransferring ? t('sendToWorkspace.sendingButton') : t('sendToWorkspace.send')}
       </Button>
       {isTransferring && (
         <svg
@@ -291,6 +316,54 @@ function TransferButton({ onClick, disabled, isTransferring, progress }: {
           />
         </svg>
       )}
+    </div>
+  )
+}
+
+function TransferProgressView({ targetName, count, activeIndex, progress }: {
+  targetName: string
+  count: number
+  activeIndex: number
+  progress: number
+}) {
+  const { t } = useTranslation()
+  const percent = Math.max(0, Math.min(100, Math.round(progress * 100)))
+  const current = Math.min(activeIndex + 1, Math.max(count, 1))
+
+  return (
+    <div className="flex flex-col gap-5 py-1">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin text-info" />
+          {t('sendToWorkspace.processingTitle')}
+        </DialogTitle>
+        <DialogDescription>
+          {t('sendToWorkspace.processingDescription', { count, target: targetName })}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>{t('sendToWorkspace.progressLabel', { current, count })}</span>
+          <span>{percent}%</span>
+        </div>
+        <div
+          className="h-2 rounded-full bg-foreground/10 overflow-hidden"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+        >
+          <div
+            className="h-full rounded-full bg-info transition-[width] duration-200 ease-out"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      </div>
+
+      <p className="rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        {t('sendToWorkspace.busyNotice')}
+      </p>
     </div>
   )
 }

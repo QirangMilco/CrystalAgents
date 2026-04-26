@@ -1026,6 +1026,35 @@ export class SessionManager implements ISessionManager {
   private initGate = new InitGate()
   // O(1) index: taskId → sessionId for background task output lookup (avoids O(n) session scan)
   private taskOutputIndex: Map<string, string> = new Map()
+  private sessionActionAbortControllers: Map<string, AbortController> = new Map()
+  private registerSessionAction(actionId?: string): AbortSignal | undefined {
+    if (!actionId) return undefined
+    const existing = this.sessionActionAbortControllers.get(actionId)
+    if (existing) existing.abort()
+    const controller = new AbortController()
+    this.sessionActionAbortControllers.set(actionId, controller)
+    return controller.signal
+  }
+
+  private unregisterSessionAction(actionId?: string): void {
+    if (!actionId) return
+    this.sessionActionAbortControllers.delete(actionId)
+  }
+
+  private assertSessionActionNotCancelled(signal?: AbortSignal): void {
+    if (signal?.aborted) {
+      throw new Error('Session action cancelled')
+    }
+  }
+
+  async cancelSessionAction(actionId: string): Promise<{ cancelled: boolean }> {
+    const controller = this.sessionActionAbortControllers.get(actionId)
+    if (!controller) return { cancelled: false }
+    controller.abort()
+    this.sessionActionAbortControllers.delete(actionId)
+    return { cancelled: true }
+  }
+
   /** Monotonic clock to ensure strictly increasing message timestamps */
   private lastTimestamp = 0
 
@@ -6837,8 +6866,10 @@ export class SessionManager implements ISessionManager {
   // Export / Import / Dispatch
   // ============================================
 
-  private async generateRemoteTransferSummary(managed: ManagedSession): Promise<string | null> {
+  private async generateRemoteTransferSummary(managed: ManagedSession, signal?: AbortSignal): Promise<string | null> {
+    this.assertSessionActionNotCancelled(signal)
     await this.ensureMessagesLoaded(managed)
+    this.assertSessionActionNotCancelled(signal)
 
     const messages = managed.messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -6849,6 +6880,7 @@ export class SessionManager implements ISessionManager {
       }))
 
     if (messages.length === 0) return null
+    this.assertSessionActionNotCancelled(signal)
 
     const workspaceRootPath = managed.workspace.rootPath
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
@@ -6893,13 +6925,15 @@ export class SessionManager implements ISessionManager {
     })
 
     try {
-      return await generateConversationSummary(messages, agent.runMiniCompletion.bind(agent))
+      const summary = await generateConversationSummary(messages, agent.runMiniCompletion.bind(agent))
+      this.assertSessionActionNotCancelled(signal)
+      return summary
     } finally {
       agent.destroy()
     }
   }
 
-  async exportRemoteSessionTransfer(sessionId: string, workspaceId: string): Promise<RemoteSessionTransferPayload | null> {
+  async exportRemoteSessionTransfer(sessionId: string, workspaceId: string, signal?: AbortSignal): Promise<RemoteSessionTransferPayload | null> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       sessionLog.warn(`[dispatch] Cannot export remote transfer: ${sessionId} not found`)
@@ -6918,8 +6952,9 @@ export class SessionManager implements ISessionManager {
 
     this.persistSession(managed)
     await sessionPersistenceQueue.flush(sessionId)
+    this.assertSessionActionNotCancelled(signal)
 
-    const summary = await this.generateRemoteTransferSummary(managed)
+    const summary = await this.generateRemoteTransferSummary(managed, signal)
     if (!summary) {
       sessionLog.warn(`[dispatch] Failed to generate remote transfer summary for ${sessionId}`)
       return null
@@ -6938,7 +6973,9 @@ export class SessionManager implements ISessionManager {
   async importRemoteSessionTransfer(
     workspaceId: string,
     payload: RemoteSessionTransferPayload,
+    signal?: AbortSignal,
   ): Promise<ImportRemoteSessionTransferResult> {
+    this.assertSessionActionNotCancelled(signal)
     if (!payload || typeof payload !== 'object' || typeof payload.summary !== 'string' || !payload.summary.trim()) {
       throw new Error('Invalid remote session transfer payload')
     }
@@ -6955,6 +6992,12 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Transferred session ${session.id} was not created`)
     }
 
+    try {
+      this.assertSessionActionNotCancelled(signal)
+    } catch (error) {
+      await this.deleteSession(session.id)
+      throw error
+    }
     managed.transferredSessionSummary = payload.summary.trim()
     managed.transferredSessionSummaryApplied = false
     this.persistSession(managed)
@@ -6963,7 +7006,9 @@ export class SessionManager implements ISessionManager {
     return { sessionId: session.id }
   }
 
-  async cloneSession(sessionId: string, workspaceId: string): Promise<CloneSessionResult> {
+  async cloneSession(sessionId: string, workspaceId: string, actionId?: string): Promise<CloneSessionResult> {
+    const signal = this.registerSessionAction(actionId)
+    try {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
@@ -6979,6 +7024,7 @@ export class SessionManager implements ISessionManager {
 
     this.persistSession(managed)
     await sessionPersistenceQueue.flush(sessionId)
+    this.assertSessionActionNotCancelled(signal)
 
     const bundle = serializeSession(managed.workspace.rootPath, sessionId)
     if (!bundle) {
@@ -6988,6 +7034,7 @@ export class SessionManager implements ISessionManager {
     if (!validateBundle(bundle)) {
       throw new Error('Invalid session bundle')
     }
+    this.assertSessionActionNotCancelled(signal)
 
     const workspace = managed.workspace
     const workspaceRootPath = workspace.rootPath
@@ -7023,6 +7070,7 @@ export class SessionManager implements ISessionManager {
       tokenUsage: header.tokenUsage ?? DEFAULT_TOKEN_USAGE,
     }
 
+    this.assertSessionActionNotCancelled(signal)
     const clonedSessionFile = getSessionFilePath(workspaceRootPath, clonedSessionId)
     writeSessionJsonl(clonedSessionFile, storedSession)
     restoreFiles(clonedSessionDir, bundle.files)
@@ -7052,18 +7100,33 @@ export class SessionManager implements ISessionManager {
       })
     }
 
+    try {
+      this.assertSessionActionNotCancelled(signal)
+    } catch (error) {
+      await this.deleteSession(clonedSessionId)
+      throw error
+    }
+
     this.sendEvent({ type: 'session_created', sessionId: clonedSessionId }, workspaceId)
 
     return { sessionId: clonedSessionId }
+    } finally {
+      this.unregisterSessionAction(actionId)
+    }
   }
 
-  async createSessionFromSummary(sessionId: string, workspaceId: string): Promise<CreateSessionFromSummaryResult> {
-    const payload = await this.exportRemoteSessionTransfer(sessionId, workspaceId)
-    if (!payload) {
-      throw new Error(`Failed to summarize session ${sessionId}`)
-    }
+  async createSessionFromSummary(sessionId: string, workspaceId: string, actionId?: string): Promise<CreateSessionFromSummaryResult> {
+    const signal = this.registerSessionAction(actionId)
+    try {
+      const payload = await this.exportRemoteSessionTransfer(sessionId, workspaceId, signal)
+      if (!payload) {
+        throw new Error(`Failed to summarize session ${sessionId}`)
+      }
 
-    return this.importRemoteSessionTransfer(workspaceId, payload)
+      return this.importRemoteSessionTransfer(workspaceId, payload, signal)
+    } finally {
+      this.unregisterSessionAction(actionId)
+    }
   }
 
   /**
