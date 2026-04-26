@@ -22,9 +22,10 @@ import {
   StyledDropdownMenuItem,
 } from "@/components/ui/styled-dropdown"
 import { cn } from "@/lib/utils"
-import { Check, ChevronDown, Eye, EyeOff, Loader2 } from "lucide-react"
+import { Check, ChevronDown, Eye, EyeOff, Loader2, RefreshCw } from "lucide-react"
 import { pickTierDefaults, resolveTierModels, type PiModelInfo } from "./tier-models"
 import {
+  deriveDefaultModelsUrl,
   resolvePiAuthProviderForSubmit,
   resolvePresetStateForBaseUrlChange,
   type PresetKey,
@@ -71,6 +72,8 @@ export interface ApiKeyInputProps {
   disabled?: boolean
   /** Provider type determines which presets and placeholders to show */
   providerType?: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'
+  /** Existing connection slug when editing; used only for secure main-process key reuse. */
+  existingConnectionSlug?: string
   /** Pre-fill values when editing an existing connection */
   initialValues?: {
     apiKey?: string
@@ -81,6 +84,7 @@ export interface ApiKeyInputProps {
     models?: string[]
     /** Pre-fill the protocol toggle for custom endpoints */
     customApi?: CustomEndpointApi
+    modelsUrl?: string
   }
 }
 
@@ -170,6 +174,118 @@ function normalizeCustomApi(api?: string): CustomEndpointApi {
   return 'openai-completions'
 }
 
+function isMaskedApiKey(value?: string): boolean {
+  return !!value && value.includes('••')
+}
+
+async function fetchCustomEndpointModels(params: {
+  baseUrl: string
+  apiKey: string
+  customApi: CustomEndpointApi
+  modelsUrl?: string
+  existingConnectionSlug?: string
+}): Promise<string[]> {
+  const endpoint = params.modelsUrl?.trim() || deriveDefaultModelsUrl(params.baseUrl, params.customApi)
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  }
+  if (params.apiKey.trim()) {
+    headers.Authorization = `Bearer ${params.apiKey.trim()}`
+  }
+  if (params.customApi === 'anthropic-messages') {
+    headers['anthropic-version'] = '2023-06-01'
+  }
+
+  debugFetchModels('[fetch-models] request', {
+    customApi: params.customApi,
+    method: 'GET',
+    endpoint,
+    headers: {
+      ...headers,
+      ...(headers.Authorization ? { Authorization: redactAuthorizationHeader(headers.Authorization) } : {}),
+    },
+    hasApiKey: !!params.apiKey.trim(),
+  })
+
+  let payload: unknown
+  try {
+    payload = await window.electronAPI.fetchCustomEndpointModels({
+      customApi: params.customApi,
+      baseUrl: params.baseUrl,
+      apiKey: params.apiKey,
+      modelsUrl: params.modelsUrl,
+      existingConnectionSlug: params.existingConnectionSlug,
+    })
+  } catch (error) {
+    debugFetchModels('[fetch-models] proxy-error', {
+      customApi: params.customApi,
+      endpoint,
+      error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+    })
+    throw error
+  }
+
+  debugFetchModels('[fetch-models] response', {
+    customApi: params.customApi,
+    endpoint,
+    payload,
+  })
+  const payloadRecord = payload && typeof payload === 'object' ? payload as { data?: unknown; models?: unknown } : null
+  const entries = Array.isArray(payloadRecord?.data)
+    ? payloadRecord.data
+    : Array.isArray(payloadRecord?.models)
+      ? payloadRecord.models
+      : Array.isArray(payload)
+        ? payload
+        : []
+
+  return entries
+    .map((entry: unknown) => {
+      if (typeof entry === 'string') return entry
+      if (entry && typeof entry === 'object' && 'id' in entry && typeof (entry as { id?: unknown }).id === 'string') {
+        return (entry as { id: string }).id
+      }
+      if (entry && typeof entry === 'object' && 'name' in entry && typeof (entry as { name?: unknown }).name === 'string') {
+        return (entry as { name: string }).name
+      }
+      return null
+    })
+    .filter((id: string | null): id is string => !!id)
+}
+
+function getFetchCustomModelsErrorMessage(error: unknown, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (error instanceof Error) {
+    if (error.message === 'network') {
+      return t('apiSetup.fetchModelsNetworkError')
+    }
+    if (error.message.startsWith('http:')) {
+      const status = Number(error.message.slice(5))
+      if (!Number.isNaN(status)) {
+        return t('apiSetup.fetchModelsHttpError', { status })
+      }
+    }
+  }
+  return t('apiSetup.fetchModelsUnknownError')
+}
+
+function isFetchModelsDebugEnabled(): boolean {
+  return (window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_FETCH_MODELS === '1'
+}
+
+function redactAuthorizationHeader(value: string): string {
+  if (!value.trim()) return value
+  const bearerPrefix = 'Bearer '
+  if (!value.startsWith(bearerPrefix)) return '[redacted]'
+  const token = value.slice(bearerPrefix.length)
+  if (token.length <= 8) return `${bearerPrefix}[redacted]`
+  return `${bearerPrefix}${token.slice(0, 4)}…${token.slice(-4)}`
+}
+
+function debugFetchModels(label: string, payload: Record<string, unknown>): void {
+  if (!isFetchModelsDebugEnabled()) return
+  void Promise.resolve(window.electronAPI.debugLog(label, payload)).catch(() => {})
+}
+
 // ============================================================
 // Pi model tier selection (for providers with many models)
 // ============================================================
@@ -181,6 +297,7 @@ export function ApiKeyInput({
   formId = "api-key-form",
   disabled,
   providerType = 'anthropic',
+  existingConnectionSlug,
   initialValues,
 }: ApiKeyInputProps) {
   // Get presets based on provider type
@@ -192,7 +309,8 @@ export function ApiKeyInput({
     ?? (initialValues?.baseUrl ? getPresetForUrl(initialValues.baseUrl, presets) : defaultPreset.key)
 
   const { t } = useTranslation()
-  const [apiKey, setApiKey] = useState(initialValues?.apiKey ?? '')
+  const initialApiKey = isMaskedApiKey(initialValues?.apiKey) ? '' : (initialValues?.apiKey ?? '')
+  const [apiKey, setApiKey] = useState(initialApiKey)
   const [showValue, setShowValue] = useState(false)
   const [baseUrl, setBaseUrl] = useState(initialValues?.baseUrl ?? defaultPreset.url)
   const [activePreset, setActivePreset] = useState<PresetKey>(initialPreset)
@@ -201,7 +319,10 @@ export function ApiKeyInput({
   )
   const [connectionDefaultModel, setConnectionDefaultModel] = useState(initialValues?.connectionDefaultModel ?? '')
   const [customApi, setCustomApi] = useState<CustomEndpointApi>(normalizeCustomApi(initialValues?.customApi))
+  const [isModelsUrlManuallyEdited, setIsModelsUrlManuallyEdited] = useState(!!initialValues?.modelsUrl?.trim())
+  const [modelsUrl, setModelsUrl] = useState(() => initialValues?.modelsUrl?.trim() || deriveDefaultModelsUrl(initialValues?.baseUrl ?? defaultPreset.url, normalizeCustomApi(initialValues?.customApi)))
   const [modelError, setModelError] = useState<string | null>(null)
+  const [customModelsLoading, setCustomModelsLoading] = useState(false)
 
   // Bedrock auth state
   const [bedrockAuthMethod, setBedrockAuthMethod] = useState<'iam_credentials' | 'environment'>('iam_credentials')
@@ -269,8 +390,59 @@ export function ApiKeyInput({
     loadPiModels(activePreset)
   }, [activePreset, loadPiModels])
 
+  useEffect(() => {
+    if (isModelsUrlManuallyEdited) return
+    setModelsUrl(deriveDefaultModelsUrl(baseUrl, customApi))
+  }, [baseUrl, customApi, isModelsUrlManuallyEdited])
+
   // Whether to show 3 tier dropdowns instead of text input
   const hasPiModels = isPiApiKeyFlow && piModels.length > 0 && !isDefaultProviderPreset && activePreset !== 'custom' && !isBedrock
+
+  const handleFetchCustomModels = useCallback(async () => {
+    const trimmedBaseUrl = baseUrl.trim()
+    if (!trimmedBaseUrl) {
+      setModelError(t('apiSetup.fetchModelsBaseUrlRequired'))
+      return
+    }
+
+    setCustomModelsLoading(true)
+    setModelError(null)
+    try {
+      const models = await fetchCustomEndpointModels({
+        baseUrl: trimmedBaseUrl,
+        apiKey,
+        customApi,
+        modelsUrl,
+        existingConnectionSlug,
+      })
+      if (models.length === 0) {
+        debugFetchModels('[fetch-models] parsed-models', {
+          customApi,
+          baseUrl: trimmedBaseUrl,
+          modelCount: 0,
+          models: [],
+        })
+        setModelError(t('apiSetup.fetchModelsEmpty'))
+        return
+      }
+      debugFetchModels('[fetch-models] parsed-models', {
+        customApi,
+        baseUrl: trimmedBaseUrl,
+        modelCount: models.length,
+        models,
+      })
+      setConnectionDefaultModel(models.join(', '))
+    } catch (error) {
+      debugFetchModels('[fetch-models] final-error', {
+        customApi,
+        baseUrl: trimmedBaseUrl,
+        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+      })
+      setModelError(getFetchCustomModelsErrorMessage(error, t))
+    } finally {
+      setCustomModelsLoading(false)
+    }
+  }, [apiKey, baseUrl, customApi, existingConnectionSlug, modelsUrl, t])
 
   const handlePresetSelect = (preset: Preset) => {
     setActivePreset(preset.key)
@@ -282,6 +454,7 @@ export function ApiKeyInput({
     } else {
       setBaseUrl(preset.url)
     }
+    setIsModelsUrlManuallyEdited(false)
     setModelError(null)
     // Pre-fill recommended model for Ollama; clear for all others
     // (Default provider presets hide the field entirely, others default to provider model IDs when empty)
@@ -336,7 +509,7 @@ export function ApiKeyInput({
     // Pi API key flow with tier dropdowns — submit selected models
     if (hasPiModels) {
       if (!bestModel || !defaultModel || !cheapModel) {
-        setModelError('Please select a model for each tier.')
+        setModelError(t('apiSetup.modelTier.selectAllRequired'))
         return
       }
       const models: string[] = [bestModel, defaultModel, cheapModel]
@@ -356,11 +529,11 @@ export function ApiKeyInput({
     // Submit with auth method and optional IAM credentials.
     if (isBedrock) {
       if (bedrockAuthMethod === 'iam_credentials' && !awsAccessKeyId.trim()) {
-        setModelError('Access Key ID is required for IAM authentication.')
+        setModelError(t('apiSetup.bedrock.accessKeyRequired'))
         return
       }
       if (bedrockAuthMethod === 'iam_credentials' && !awsSecretAccessKey.trim()) {
-        setModelError('Secret Access Key is required for IAM authentication.')
+        setModelError(t('apiSetup.bedrock.secretKeyRequired'))
         return
       }
       const parsedModels = parseModelList(connectionDefaultModel)
@@ -389,13 +562,18 @@ export function ApiKeyInput({
     const isUsingDefaultEndpoint = isDefaultProviderPreset || !effectiveBaseUrl
     const requiresModel = !isDefaultProviderPreset && !!effectiveBaseUrl
     if (requiresModel && parsedModels.length === 0) {
-      setModelError('Default model is required for custom endpoints.')
+      setModelError(t('apiSetup.defaultModelRequired'))
       return
     }
 
     // Include custom endpoint protocol when user configured a custom base URL
     const isCustomEndpoint = activePreset === 'custom' && !!effectiveBaseUrl
-    const customEndpoint = isCustomEndpoint ? { api: normalizeCustomApi(customApi) } : undefined
+    const trimmedModelsUrl = modelsUrl.trim()
+    const defaultModelsUrl = deriveDefaultModelsUrl(effectiveBaseUrl, normalizeCustomApi(customApi))
+    const customEndpoint = isCustomEndpoint ? {
+      api: normalizeCustomApi(customApi),
+      ...(trimmedModelsUrl && trimmedModelsUrl !== defaultModelsUrl ? { modelsUrl: trimmedModelsUrl } : {}),
+    } : undefined
     const resolvedPiAuthProvider = isCustomEndpoint
       ? (customApi === 'anthropic-messages' ? 'anthropic' : 'openai')
       : effectivePiAuthProvider
@@ -414,11 +592,12 @@ export function ApiKeyInput({
   }
 
   const tierConfigs = [
-    { label: 'Best', desc: 'most capable', value: bestModel, onChange: setBestModel },
-    { label: 'Balanced', desc: 'good for everyday use', value: defaultModel, onChange: setDefaultModel },
-    { label: 'Fast', desc: 'summarization & utility', value: cheapModel, onChange: setCheapModel },
+    { label: t('apiSetup.modelTier.best'), desc: t('apiSetup.modelTier.bestDesc'), value: bestModel, onChange: setBestModel },
+    { label: t('apiSetup.modelTier.balanced'), desc: t('apiSetup.modelTier.balancedDesc'), value: defaultModel, onChange: setDefaultModel },
+    { label: t('apiSetup.modelTier.fast'), desc: t('apiSetup.modelTier.fastDesc'), value: cheapModel, onChange: setCheapModel },
   ]
   const activeTierConfig = openTier ? tierConfigs.find(t => t.label === openTier) : null
+  const canFetchCustomModels = activePreset === 'custom' && !isDefaultProviderPreset && !isBedrock
 
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-6">
@@ -434,7 +613,7 @@ export function ApiKeyInput({
             type={showValue ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={apiKeyPlaceholder}
+            placeholder={initialValues?.apiKey ? t('apiSetup.apiKeyKeepExistingPlaceholder') : apiKeyPlaceholder}
             className={cn(
               "pr-10 border-0 bg-transparent shadow-none",
               status === 'error' && "focus-visible:ring-destructive"
@@ -777,12 +956,53 @@ export function ApiKeyInput({
         </div>
       ) : !isDefaultProviderPreset && (
         <div className="space-y-2">
-          <Label htmlFor="connection-default-model" className="text-muted-foreground font-normal">
-            Default Model{' '}
-            <span className="text-foreground/30">
-              · {!isBedrock && baseUrl.trim() ? 'required' : 'optional'}
-            </span>
-          </Label>
+          {canFetchCustomModels && (
+            <div className="space-y-2">
+              <Label htmlFor="models-url" className="text-muted-foreground font-normal">
+                {t('apiSetup.modelsUrl')}
+              </Label>
+              <div className={cn(
+                "rounded-md shadow-minimal transition-colors",
+                "bg-foreground-2 focus-within:bg-background"
+              )}>
+                <Input
+                  id="models-url"
+                  type="text"
+                  value={modelsUrl}
+                  onChange={(e) => {
+                    setModelsUrl(e.target.value)
+                    setIsModelsUrlManuallyEdited(true)
+                    setModelError(null)
+                  }}
+                  placeholder={deriveDefaultModelsUrl(baseUrl, customApi) || t('apiSetup.modelsUrlPlaceholder')}
+                  className="border-0 bg-transparent shadow-none"
+                  disabled={isDisabled || !baseUrl.trim()}
+                />
+              </div>
+              <p className="text-xs text-foreground/30">
+                {t('apiSetup.modelsUrlHelpText')}
+              </p>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="connection-default-model" className="text-muted-foreground font-normal">
+              {t('apiSetup.defaultModel')}{' '}
+              <span className="text-foreground/30">
+                · {!isBedrock && baseUrl.trim() ? t('apiSetup.required') : t('apiSetup.optional')}
+              </span>
+            </Label>
+            {canFetchCustomModels && (
+              <button
+                type="button"
+                onClick={handleFetchCustomModels}
+                disabled={isDisabled || customModelsLoading || !baseUrl.trim()}
+                className="flex h-6 items-center gap-1 rounded-[6px] bg-background shadow-minimal px-2 text-[12px] font-medium text-foreground/50 hover:bg-foreground/5 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {customModelsLoading ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+                {t('apiSetup.fetchModels')}
+              </button>
+            )}
+          </div>
           <div className={cn(
             "rounded-md shadow-minimal transition-colors",
             "bg-foreground-2 focus-within:bg-background",
@@ -796,7 +1016,7 @@ export function ApiKeyInput({
                 setConnectionDefaultModel(e.target.value)
                 setModelError(null)
               }}
-              placeholder="e.g. claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5"
+              placeholder={t('apiSetup.defaultModelPlaceholder')}
               className="border-0 bg-transparent shadow-none"
               disabled={isDisabled}
             />
@@ -805,11 +1025,11 @@ export function ApiKeyInput({
             <p className="text-xs text-destructive">{modelError}</p>
           )}
           <p className="text-xs text-foreground/30">
-            Comma-separated list. The first model is the default. The last is used for summarization.
+            {t('apiSetup.defaultModelHelpText')}
           </p>
           {(activePreset === 'custom' || !activePreset) && (
             <p className="text-xs text-foreground/30">
-              Required for custom endpoints. Use the provider-specific model ID.
+              {t('apiSetup.customEndpointModelHelpText')}
             </p>
           )}
         </div>

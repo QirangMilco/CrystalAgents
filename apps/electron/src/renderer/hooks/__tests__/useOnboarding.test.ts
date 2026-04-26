@@ -101,6 +101,26 @@ describe('apiSetupMethodToConnectionSetup', () => {
     expect(setup.modelSelectionMode).toBe('userDefined3Tier')
   })
 
+  it('passes through customEndpoint modelsUrl', () => {
+    const setup = apiSetupMethodToConnectionSetup(
+      'anthropic_api_key',
+      {
+        credential: 'sk-ant-test',
+        baseUrl: 'https://custom.api',
+        customEndpoint: {
+          api: 'openai-completions',
+          modelsUrl: 'https://custom.api/internal/models',
+        },
+      },
+      null,
+      new Set(),
+    )
+    expect(setup.customEndpoint).toEqual({
+      api: 'openai-completions',
+      modelsUrl: 'https://custom.api/internal/models',
+    })
+  })
+
   it('uses editingSlug when editing', () => {
     const setup = apiSetupMethodToConnectionSetup(
       'anthropic_api_key',

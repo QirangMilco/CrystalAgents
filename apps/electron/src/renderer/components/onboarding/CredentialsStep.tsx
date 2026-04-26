@@ -42,7 +42,9 @@ interface CredentialsStepProps {
     activePreset?: string
     models?: string[]
     customApi?: CustomEndpointApi
+    modelsUrl?: string
   }
+  editingSlug?: string | null
 }
 
 export function CredentialsStep({
@@ -57,6 +59,7 @@ export function CredentialsStep({
   onCancelOAuth,
   copilotDeviceCode,
   editInitialValues,
+  editingSlug,
 }: CredentialsStepProps) {
   const { t } = useTranslation()
   const isClaudeOAuth = apiSetupMethod === 'claude_oauth'
@@ -272,6 +275,7 @@ export function CredentialsStep({
     editInitialValues?.connectionDefaultModel ?? '',
     (editInitialValues?.models ?? []).join('|'),
     editInitialValues?.customApi ?? '',
+    editInitialValues?.modelsUrl ?? '',
   ].join('::')
 
   return (
@@ -297,6 +301,7 @@ export function CredentialsStep({
         errorMessage={errorMessage}
         onSubmit={onSubmit}
         providerType={providerType}
+        existingConnectionSlug={editingSlug ?? undefined}
         initialValues={editInitialValues}
       />
     </StepFormLayout>

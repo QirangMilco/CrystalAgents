@@ -572,6 +572,7 @@ export default function AiSettingsPage() {
     activePreset?: string
     models?: string[]
     customApi?: CustomEndpointApi
+    modelsUrl?: string
   } | undefined>(undefined)
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
 
@@ -740,13 +741,10 @@ export default function AiSettingsPage() {
   }, [apiSetupOnboarding, openApiSetup])
 
   const handleEditConnection = useCallback(async (connection: LlmConnectionWithStatus) => {
-    // Fetch stored API key (best-effort — if IPC not available yet, skip pre-fill)
-    let apiKey: string | undefined
-    try {
-      apiKey = (await window.electronAPI.getLlmConnectionApiKey(connection.slug)) ?? undefined
-    } catch {
-      // IPC method may not exist if app wasn't restarted after code change
-    }
+    // Do not pre-fill API keys when editing. The backend returns masked values,
+    // and submitting/testing those placeholders would force users to re-enter keys.
+    // Leaving this empty preserves the existing credential on save.
+    const apiKey = undefined
 
     // Build model string from connection's models array
     const modelStr = connection.models
@@ -767,6 +765,7 @@ export default function AiSettingsPage() {
       activePreset: isCustomEndpointConnection ? 'custom' : (connection.piAuthProvider || undefined),
       models: modelIds,
       customApi: connection.customEndpoint?.api,
+      modelsUrl: connection.customEndpoint?.modelsUrl,
     })
 
     // Open overlay and jump directly to credentials step (no reset — jumpToCredentials sets state)
@@ -944,8 +943,8 @@ export default function AiSettingsPage() {
                     }))}
                   />
                   <SettingsMenuSelectRow
-                    label="Mini model"
-                    description="Used for titles, summaries, and utility completions."
+                    label={t('settings.ai.miniModel')}
+                    description={t('settings.ai.miniModelDesc')}
                     value={defaultMiniModel}
                     onValueChange={handleDefaultMiniModelChange}
                     options={getModelOptionsForConnection(defaultConnection).map(o => ({
@@ -1063,6 +1062,7 @@ export default function AiSettingsPage() {
                   onCancelOAuth={apiSetupOnboarding.handleCancelOAuth}
                   copilotDeviceCode={apiSetupOnboarding.copilotDeviceCode}
                   editInitialValues={editInitialValues}
+                  editingSlug={editingConnectionSlug}
                   className="h-full"
                 />
                 <div

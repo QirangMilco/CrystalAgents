@@ -128,6 +128,7 @@ import { AutomationsListPanel } from "../automations/AutomationsListPanel"
 import { APP_EVENTS, AGENT_EVENTS, type AutomationFilterKind, AUTOMATION_TYPE_TO_FILTER_KIND } from "../automations/types"
 import { useAutomations } from "@/hooks/useAutomations"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { ImportDialogFooter } from "./ImportDialogFooter"
 import { PanelHeader } from "./PanelHeader"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
 import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
@@ -4097,23 +4098,18 @@ function AppShellContent({
             ) : null}
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
-            {workspaceImportDialogPhase === 'preview' ? (
-              <>
-                <Button variant="outline" onClick={() => { setWorkspaceImportDialogOpen(false); resetWorkspaceImportDialog() }} disabled={isImportingWorkspaceRecords}>
-                  {t('common.cancel')}
-                </Button>
-                <Button onClick={() => void executeWorkspaceImport()} disabled={isImportingWorkspaceRecords || !workspaceImportStatus}>
-                  {isImportingWorkspaceRecords ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {t('session.workspaceRecordImportConfirmButton')}
-                </Button>
-              </>
-            ) : (
-              <Button variant="outline" onClick={() => { setWorkspaceImportDialogOpen(false); resetWorkspaceImportDialog() }}>
-                {t('common.close')}
-              </Button>
-            )}
-          </DialogFooter>
+          <ImportDialogFooter
+            phase={workspaceImportDialogPhase}
+            importing={isImportingWorkspaceRecords}
+            canImport={!!workspaceImportStatus}
+            cancelLabel={t('common.cancel')}
+            confirmLabel={t('session.workspaceRecordImportConfirmButton')}
+            closeLabel={t('common.close')}
+            loadingIndicator={<Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+            onCancel={() => { setWorkspaceImportDialogOpen(false); resetWorkspaceImportDialog() }}
+            onConfirm={() => void executeWorkspaceImport()}
+            onClose={() => { setWorkspaceImportDialogOpen(false); resetWorkspaceImportDialog() }}
+          />
         </DialogContent>
       </Dialog>
 

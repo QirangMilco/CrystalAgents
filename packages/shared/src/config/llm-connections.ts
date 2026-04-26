@@ -107,6 +107,8 @@ export type CustomEndpointApi = 'openai-completions' | 'openai-responses' | 'ant
  */
 export interface CustomEndpointConfig {
   api: CustomEndpointApi;
+  /** Optional override for the endpoint used to list models. */
+  modelsUrl?: string;
   /** Explicit capability hint for arbitrary endpoints — never guessed automatically. */
   supportsImages?: boolean;
 }

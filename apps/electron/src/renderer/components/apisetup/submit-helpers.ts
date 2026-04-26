@@ -53,3 +53,14 @@ export function resolvePresetStateForBaseUrlChange(params: {
     lastNonCustomPreset,
   }
 }
+
+export function deriveDefaultModelsUrl(baseUrl: string, customApi: 'openai-completions' | 'openai-responses' | 'anthropic-messages'): string {
+  const trimmedBaseUrl = baseUrl.trim()
+  if (!trimmedBaseUrl) return ''
+
+  const normalizedBaseUrl = trimmedBaseUrl.replace(/\/+$/, '')
+  if (customApi === 'anthropic-messages') {
+    return `${normalizedBaseUrl}/v1/models`
+  }
+  return `${normalizedBaseUrl}/models`
+}

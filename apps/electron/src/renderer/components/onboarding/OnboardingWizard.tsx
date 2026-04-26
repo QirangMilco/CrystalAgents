@@ -74,7 +74,9 @@ interface OnboardingWizardProps {
     activePreset?: string
     models?: string[]
     customApi?: CustomEndpointApi
+    modelsUrl?: string
   }
+  editingSlug?: string | null
 
   className?: string
 }
@@ -114,6 +116,7 @@ export function OnboardingWizard({
   onSubmitLocalModel,
   // Edit mode
   editInitialValues,
+  editingSlug,
   className
 }: OnboardingWizardProps) {
   const renderStep = () => {
@@ -171,6 +174,7 @@ export function OnboardingWizard({
             isWaitingForCode={isWaitingForCode}
             onSubmitAuthCode={onSubmitAuthCode}
             editInitialValues={editInitialValues}
+            editingSlug={editingSlug}
             onCancelOAuth={onCancelOAuth}
             copilotDeviceCode={copilotDeviceCode}
           />

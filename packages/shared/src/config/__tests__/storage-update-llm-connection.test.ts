@@ -126,4 +126,24 @@ describe('updateLlmConnection – customEndpoint', () => {
     const conn = readConnection('custom-compat')
     expect(conn.customEndpoint).toEqual({ api: 'openai-responses' })
   })
+
+  it('persists customEndpoint modelsUrl when provided', () => {
+    const { runUpdate, readConnection } = setup([
+      makeConnection({ customEndpoint: { api: 'openai-completions' } }),
+    ])
+
+    const ok = runUpdate('custom-compat', {
+      customEndpoint: {
+        api: 'openai-completions',
+        modelsUrl: 'https://custom.example/v1/discovery/models',
+      },
+    })
+    expect(ok).toBe(true)
+
+    const conn = readConnection('custom-compat')
+    expect(conn.customEndpoint).toEqual({
+      api: 'openai-completions',
+      modelsUrl: 'https://custom.example/v1/discovery/models',
+    })
+  })
 })

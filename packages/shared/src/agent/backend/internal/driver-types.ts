@@ -26,7 +26,7 @@ export interface BackendRuntimePayload extends Record<string, unknown> {
   /** Custom base URL from the LLM connection (e.g. Azure OpenAI endpoint). */
   baseUrl?: string;
   /** Custom endpoint protocol config (api type for routing). */
-  customEndpoint?: { api: string; supportsImages?: boolean };
+  customEndpoint?: { api: string; modelsUrl?: string; supportsImages?: boolean };
   /** Models registered for a custom endpoint. Strings default to 128K context; objects allow overrides. */
   customModels?: Array<string | { id: string; contextWindow?: number; supportsImages?: boolean }>;
 }

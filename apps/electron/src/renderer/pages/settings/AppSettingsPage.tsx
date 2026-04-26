@@ -15,13 +15,22 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { ExternalLink } from 'lucide-react'
+import { AlertCircle, CircleCheckBig, CircleDashed, CircleX, DatabaseZap, ExternalLink, FolderOpen } from 'lucide-react'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ImportDialogFooter } from '@/components/app-shell/ImportDialogFooter'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
 import { Spinner } from '@craft-agent/ui'
+import { cn } from '@/lib/utils'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import type { NetworkProxySettings } from '../../../shared/types'
 
@@ -52,6 +61,34 @@ interface ProxyFormState {
   httpsProxy: string
   noProxy: string
 }
+
+type OfficialImportDetection = {
+  found: boolean
+  sourcePath: string
+  availableEntries: Array<{
+    name: string
+    path: string
+    kind: 'file' | 'directory'
+    exists: boolean
+    description: string
+  }>
+}
+
+type OfficialImportResult = {
+  success: boolean
+  sourcePath: string
+  imported: string[]
+  skipped: string[]
+  warnings: string[]
+  error?: string
+  results: Array<{
+    name: string
+    status: 'imported' | 'skipped' | 'missing' | 'failed'
+    detail: string
+  }>
+}
+
+type OfficialImportDialogPhase = 'preview' | 'result'
 
 const CRYSTAL_REPOSITORY_URL = 'https://github.com/QirangMilco/CrystalAgents'
 const UPSTREAM_REPOSITORY_URL = 'https://github.com/lukilabs/craft-agents-oss'
@@ -129,31 +166,11 @@ export default function AppSettingsPage() {
   // Manual import state (official Craft Agents -> current variant)
   const [isDetectingImportSource, setIsDetectingImportSource] = useState(false)
   const [isImportingOfficialData, setIsImportingOfficialData] = useState(false)
-  const [importDetection, setImportDetection] = useState<{
-    found: boolean
-    sourcePath: string
-    availableEntries: Array<{
-      name: string
-      path: string
-      kind: 'file' | 'directory'
-      exists: boolean
-      description: string
-    }>
-  } | null>(null)
+  const [importDetection, setImportDetection] = useState<OfficialImportDetection | null>(null)
   const [importSourcePath, setImportSourcePath] = useState('')
-  const [lastImportResult, setLastImportResult] = useState<{
-    success: boolean
-    sourcePath: string
-    imported: string[]
-    skipped: string[]
-    warnings: string[]
-    error?: string
-    results: Array<{
-      name: string
-      status: 'imported' | 'skipped' | 'missing' | 'failed'
-      detail: string
-    }>
-  } | null>(null)
+  const [lastImportResult, setLastImportResult] = useState<OfficialImportResult | null>(null)
+  const [officialImportDialogOpen, setOfficialImportDialogOpen] = useState(false)
+  const [officialImportDialogPhase, setOfficialImportDialogPhase] = useState<OfficialImportDialogPhase>('preview')
 
   const handleCheckForUpdates = useCallback(async () => {
     setIsCheckingForUpdates(true)
@@ -190,22 +207,23 @@ export default function AppSettingsPage() {
   }, [])
 
   const detectImportSource = useCallback(async (sourcePath?: string) => {
-    if (!window.electronAPI?.detectOfficialImportSource) return
+    if (!window.electronAPI?.detectOfficialImportSource) return null
     setIsDetectingImportSource(true)
     try {
       const detected = await window.electronAPI.detectOfficialImportSource(sourcePath)
       setImportDetection(detected)
       setImportSourcePath(detected.sourcePath)
+      return detected
     } catch (error) {
       console.error('Failed to detect import source:', error)
+      toast.error(t('settings.app.import.failed'), {
+        description: error instanceof Error ? error.message : String(error),
+      })
+      return null
     } finally {
       setIsDetectingImportSource(false)
     }
-  }, [])
-
-  useEffect(() => {
-    void detectImportSource()
-  }, [detectImportSource])
+  }, [t])
 
   const handleNotificationsEnabledChange = useCallback(async (enabled: boolean) => {
     setNotificationsEnabled(enabled)
@@ -257,26 +275,44 @@ export default function AppSettingsPage() {
     setProxyError(undefined)
   }, [savedProxyForm])
 
+  const openOfficialImportPreview = useCallback((detected: OfficialImportDetection) => {
+    setImportDetection(detected)
+    setImportSourcePath(detected.sourcePath)
+    setLastImportResult(null)
+    setOfficialImportDialogPhase('preview')
+    setOfficialImportDialogOpen(true)
+  }, [])
+
+  const handleDetectDefaultAndPreview = useCallback(async () => {
+    const detected = await detectImportSource()
+    if (!detected) return
+    openOfficialImportPreview(detected)
+  }, [detectImportSource, openOfficialImportPreview])
+
   const handleChooseImportFolder = useCallback(async () => {
     const path = await window.electronAPI.openFolderDialog()
     if (!path) return
-    setImportSourcePath(path)
-    await detectImportSource(path)
-  }, [detectImportSource])
+    const detected = await detectImportSource(path)
+    if (!detected) return
+    openOfficialImportPreview(detected)
+  }, [detectImportSource, openOfficialImportPreview])
+
+  const resetOfficialImportDialog = useCallback(() => {
+    setOfficialImportDialogPhase('preview')
+    setLastImportResult(null)
+  }, [])
 
   const handleImportOfficialData = useCallback(async () => {
-    if (!window.electronAPI?.importOfficialData) return
-
-    const confirmed = window.confirm(t('settings.app.import.confirm'))
-    if (!confirmed) return
+    if (!window.electronAPI?.importOfficialData || !importDetection) return
 
     setIsImportingOfficialData(true)
     try {
-      const sourcePath = importSourcePath.trim() || importDetection?.sourcePath
+      const sourcePath = importDetection.sourcePath
       const result = await window.electronAPI.importOfficialData({
         sourcePath,
       })
       setLastImportResult(result)
+      setOfficialImportDialogPhase('result')
 
       if (result.success) {
         const importedSummary = result.results
@@ -307,7 +343,7 @@ export default function AppSettingsPage() {
     } finally {
       setIsImportingOfficialData(false)
     }
-  }, [detectImportSource, importDetection?.sourcePath, importSourcePath, t])
+  }, [detectImportSource, importDetection, onRefreshSessions, onRefreshWorkspaces, t])
 
   return (
     <div className="h-full flex flex-col">
@@ -419,93 +455,40 @@ export default function AppSettingsPage() {
               </SettingsSection>
 
               {/* Data Import */}
-              <SettingsSection
-                title={t("settings.app.import.sectionTitle")}
-                description={t("settings.app.import.description")}
-              >
+              <SettingsSection title={t("settings.app.import.sectionTitle")}>
                 <SettingsCard>
-                  <div className="px-3 py-3 space-y-4">
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">{t('settings.app.import.sourceLabel')}</div>
-                      <input
-                        value={importSourcePath}
-                        onChange={(e) => setImportSourcePath(e.target.value)}
-                        placeholder={t('settings.app.import.sourcePlaceholder')}
-                        className="w-full h-9 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <div className="text-xs text-muted-foreground">
-                        {importDetection?.found ? t('settings.app.import.statusFound') : t('settings.app.import.statusMissing')}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void detectImportSource()}
-                        disabled={isDetectingImportSource || isImportingOfficialData}
-                      >
-                        {isDetectingImportSource ? (
-                          <>
-                            <Spinner className="mr-1.5" />
-                            {t('common.checking')}
-                          </>
-                        ) : t('settings.app.import.actionDetectDefault')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleChooseImportFolder()}
-                        disabled={isDetectingImportSource || isImportingOfficialData}
-                      >
-                        {t('settings.app.import.actionSelectFolder')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => void handleImportOfficialData()}
-                        disabled={isImportingOfficialData || !importDetection?.found}
-                      >
-                        {isImportingOfficialData ? (
-                          <>
-                            <Spinner className="mr-1.5" />
-                            {t('settings.app.import.importing')}
-                          </>
-                        ) : t('settings.app.import.actionImport')}
-                      </Button>
-                    </div>
-
-                    <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-3">
-                      <div className="text-sm font-medium">{t('settings.app.import.contentsTitle')}</div>
-                      <ul className="space-y-1 text-xs text-muted-foreground">
-                        {(importDetection?.availableEntries ?? []).map((entry) => (
-                          <li key={entry.name}>
-                            <span className="font-medium text-foreground">{entry.name}</span>
-                            {' — '}
-                            {entry.description}
-                            {' · '}
-                            {entry.exists ? t('settings.app.import.entryExists') : t('settings.app.import.entryMissing')}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {lastImportResult && (
-                      <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-3">
-                        <div className="text-sm font-medium">{t('settings.app.import.resultTitle')}</div>
-                        <ul className="space-y-1 text-xs text-muted-foreground">
-                          {lastImportResult.results.map((item) => (
-                            <li key={`${item.name}-${item.status}`}>
-                              <span className="font-medium text-foreground">{item.name}</span>
-                              {' · '}
-                              {t(`settings.app.import.result.${item.status}`)}
-                              {' · '}
-                              {item.detail}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
+                  <SettingsRow
+                    label={t("settings.app.import.sectionTitle")}
+                    description={t("settings.app.import.description")}
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleDetectDefaultAndPreview()}
+                      disabled={isDetectingImportSource || isImportingOfficialData}
+                    >
+                      {isDetectingImportSource ? (
+                        <>
+                          <Spinner className="mr-1.5" />
+                          {t('common.checking')}
+                        </>
+                      ) : (
+                        <>
+                          <DatabaseZap className="mr-1.5 h-4 w-4" />
+                          {t('session.workspaceRecordImportAutoMode')}
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleChooseImportFolder()}
+                      disabled={isDetectingImportSource || isImportingOfficialData}
+                    >
+                      <FolderOpen className="mr-1.5 h-4 w-4" />
+                      {t('session.workspaceRecordImportManualMode')}
+                    </Button>
+                  </SettingsRow>
                 </SettingsCard>
               </SettingsSection>
 
@@ -587,6 +570,130 @@ export default function AppSettingsPage() {
           </div>
         </ScrollArea>
       </div>
+
+      <Dialog open={officialImportDialogOpen} onOpenChange={(open) => {
+        if (!isImportingOfficialData) {
+          setOfficialImportDialogOpen(open)
+          if (!open) resetOfficialImportDialog()
+        }
+      }}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <DatabaseZap className="h-4 w-4" />
+              {officialImportDialogPhase === 'preview'
+                ? t('session.workspaceRecordImportPreviewTitle')
+                : t('session.workspaceRecordImportResultsTitle')}
+            </DialogTitle>
+            <DialogDescription>
+              {officialImportDialogPhase === 'preview'
+                ? t('session.workspaceRecordImportPreviewDesc')
+                : t('session.workspaceRecordImportResultsDesc')}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            {importDetection && (
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm space-y-1">
+                <div className="font-medium text-foreground">{t('session.workspaceRecordImportSourceLine', { path: importSourcePath })}</div>
+                <div className="text-muted-foreground">
+                  {importDetection.found ? t('settings.app.import.statusFound') : t('settings.app.import.statusMissing')}
+                </div>
+              </div>
+            )}
+
+            {officialImportDialogPhase === 'preview' ? (
+              <div className="rounded-lg border border-border/60 overflow-hidden">
+                <div className="px-3 py-3 border-b border-border/60">
+                  <div className="font-medium text-sm">{t('settings.app.import.contentsTitle')}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {t('session.workspaceRecordImportGroupCounts', {
+                      total: importDetection?.availableEntries.length ?? 0,
+                      importable: importDetection?.availableEntries.filter(entry => entry.exists).length ?? 0,
+                      skipped: importDetection?.availableEntries.filter(entry => !entry.exists).length ?? 0,
+                    })}
+                  </div>
+                </div>
+                <div className="px-3 py-2 space-y-2 bg-muted/10">
+                  {(importDetection?.availableEntries ?? []).map((entry) => (
+                    <div key={entry.name} className="flex items-start justify-between gap-3 text-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate">{entry.name}</div>
+                        <div className="text-xs text-muted-foreground break-words">{entry.description}</div>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-1 text-xs">
+                        {entry.exists ? <CircleCheckBig className="h-3.5 w-3.5 text-success" /> : <AlertCircle className="h-3.5 w-3.5 text-muted-foreground" />}
+                        <span className={cn(entry.exists ? 'text-success' : 'text-muted-foreground')}>
+                          {entry.exists ? t('session.workspaceRecordImportStatusReady') : t('session.workspaceRecordImportStatusMissing')}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border/60 overflow-hidden">
+                <div className="px-3 py-3 border-b border-border/60">
+                  <div className="font-medium text-sm">{t('settings.app.import.resultTitle')}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {t('session.workspaceRecordImportDoneDesc', {
+                      imported: lastImportResult?.imported.length ?? 0,
+                      skipped: lastImportResult?.skipped.length ?? 0,
+                      failed: lastImportResult?.results.filter(item => item.status === 'failed').length ?? 0,
+                    })}
+                  </div>
+                </div>
+                <div className="px-3 py-2 space-y-2 bg-muted/10">
+                  {(lastImportResult?.results ?? []).map((item) => (
+                    <div key={`${item.name}-${item.status}`} className="flex items-start justify-between gap-3 text-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate">{item.name}</div>
+                        <div className="text-xs text-muted-foreground break-words">{item.detail}</div>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-1 text-xs">
+                        {item.status === 'imported' && <CircleCheckBig className="h-3.5 w-3.5 text-success" />}
+                        {item.status === 'skipped' && <CircleDashed className="h-3.5 w-3.5 text-warning" />}
+                        {item.status === 'failed' && <CircleX className="h-3.5 w-3.5 text-destructive" />}
+                        {item.status === 'missing' && <AlertCircle className="h-3.5 w-3.5 text-muted-foreground" />}
+                        <span className={cn(
+                          item.status === 'imported' && 'text-success',
+                          item.status === 'skipped' && 'text-warning',
+                          item.status === 'failed' && 'text-destructive',
+                          item.status === 'missing' && 'text-muted-foreground',
+                        )}>
+                          {t(`settings.app.import.result.${item.status}`)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {officialImportDialogPhase === 'result' && lastImportResult?.warnings?.length ? (
+              <div className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 space-y-1">
+                <div className="text-sm font-medium">{t('session.workspaceRecordImportWarningsTitle')}</div>
+                {lastImportResult.warnings.map((warning, index) => (
+                  <div key={index} className="text-xs text-muted-foreground break-words">{warning}</div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <ImportDialogFooter
+            phase={officialImportDialogPhase}
+            importing={isImportingOfficialData}
+            canImport={!!importDetection?.found}
+            cancelLabel={t('common.cancel')}
+            confirmLabel={t('session.workspaceRecordImportConfirmButton')}
+            closeLabel={t('common.close')}
+            loadingIndicator={<Spinner className="mr-1.5" />}
+            onCancel={() => { setOfficialImportDialogOpen(false); resetOfficialImportDialog() }}
+            onConfirm={() => void handleImportOfficialData()}
+            onClose={() => { setOfficialImportDialogOpen(false); resetOfficialImportDialog() }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -206,6 +206,7 @@ export const RPC_CHANNELS = {
   settings: {
     SETUP_LLM_CONNECTION: 'settings:setupLlmConnection',
     TEST_LLM_CONNECTION_SETUP: 'settings:testLlmConnectionSetup',
+    FETCH_CUSTOM_ENDPOINT_MODELS: 'settings:fetchCustomEndpointModels',
     GET_DEFAULT_THINKING_LEVEL: 'settings:getDefaultThinkingLevel',
     SET_DEFAULT_THINKING_LEVEL: 'settings:setDefaultThinkingLevel',
     GET_NETWORK_PROXY: 'settings:getNetworkProxy',

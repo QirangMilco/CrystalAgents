@@ -180,6 +180,7 @@ if (isDebugMode) {
     CRAFT_DEBUG_STREAMING_STEPS: process.env.CRAFT_DEBUG_STREAMING_STEPS ?? 'unset',
     CRAFT_DEBUG_TOOL_ARGS: process.env.CRAFT_DEBUG_TOOL_ARGS ?? 'unset',
     CRAFT_DEBUG_STARTUP_PATHS: process.env.CRAFT_DEBUG_STARTUP_PATHS ?? 'unset',
+    CRAFT_DEBUG_FETCH_MODELS: process.env.CRAFT_DEBUG_FETCH_MODELS ?? 'unset',
   })
 }
 
@@ -470,21 +471,60 @@ function mergeConfigJsonFromOfficial(sourcePath: string, targetPath: string): { 
     })
   }
 
-  const merged = [...targetWorkspaces]
+  const mergedWorkspaces = [...targetWorkspaces]
   for (const ws of sourceWorkspaces) {
-    if (!hasWorkspace(ws)) merged.push(ws)
+    if (!hasWorkspace(ws)) mergedWorkspaces.push(ws)
   }
 
-  const changed = merged.length !== targetWorkspaces.length
-  if (!changed) {
-    return { imported: false }
-  }
+  const sourceConnections = Array.isArray((source as any).llmConnections) ? (source as any).llmConnections : []
+  const targetConnections = Array.isArray((target as any).llmConnections) ? (target as any).llmConnections : []
+  const targetConnectionSlugs = new Set(
+    targetConnections
+      .map((connection: any) => typeof connection?.slug === 'string' ? connection.slug : null)
+      .filter(Boolean)
+  )
+  const importedConnections = sourceConnections.filter((connection: any) => {
+    const slug = typeof connection?.slug === 'string' ? connection.slug : null
+    return slug && !targetConnectionSlugs.has(slug)
+  })
+  const mergedConnections = importedConnections.length > 0
+    ? [...targetConnections, ...importedConnections]
+    : targetConnections
 
-  const next = {
+  const next: Record<string, any> = {
     ...target,
-    workspaces: merged,
+    workspaces: mergedWorkspaces,
     activeWorkspaceId: (target as any).activeWorkspaceId ?? (source as any).activeWorkspaceId ?? null,
     activeSessionId: (target as any).activeSessionId ?? null,
+  }
+
+  if (sourceConnections.length > 0 && ((target as any).llmConnections === undefined || importedConnections.length > 0)) {
+    next.llmConnections = mergedConnections
+  }
+
+  const sourceDefaultConnection = typeof (source as any).defaultLlmConnection === 'string'
+    ? (source as any).defaultLlmConnection
+    : undefined
+  const hasImportedDefaultConnection = sourceDefaultConnection
+    ? mergedConnections.some((connection: any) => connection?.slug === sourceDefaultConnection)
+    : false
+  if (!(target as any).defaultLlmConnection && sourceDefaultConnection && hasImportedDefaultConnection) {
+    next.defaultLlmConnection = sourceDefaultConnection
+  }
+
+  if ((target as any).defaultThinkingLevel === undefined && (source as any).defaultThinkingLevel !== undefined) {
+    next.defaultThinkingLevel = (source as any).defaultThinkingLevel
+  }
+  if ((target as any).extendedPromptCache === undefined && (source as any).extendedPromptCache !== undefined) {
+    next.extendedPromptCache = (source as any).extendedPromptCache
+  }
+  if ((target as any).enable1MContext === undefined && (source as any).enable1MContext !== undefined) {
+    next.enable1MContext = (source as any).enable1MContext
+  }
+
+  const changed = JSON.stringify(next) !== JSON.stringify(target)
+  if (!changed) {
+    return { imported: false }
   }
 
   writeFileSync(targetPath, JSON.stringify(next, null, 2))
@@ -582,10 +622,10 @@ function importOfficialConfigManually(args?: { sourcePath?: string; includeEntri
         const result = mergeConfigJsonFromOfficial(sourceEntry, targetEntry)
         if (result.imported) {
           imported.push(entry)
-          results.push({ name: entry, status: 'imported', detail: 'Merged workspace references from official config.json' })
+          results.push({ name: entry, status: 'imported', detail: 'Merged workspace references and missing LLM/API settings from official config.json' })
         } else {
           skipped.push(entry)
-          results.push({ name: entry, status: 'skipped', detail: result.warning ?? 'No new workspace references to import' })
+          results.push({ name: entry, status: 'skipped', detail: result.warning ?? 'No new workspace references or LLM/API settings to import' })
         }
         if (result.warning) warnings.push(result.warning)
         continue
@@ -606,7 +646,10 @@ function importOfficialConfigManually(args?: { sourcePath?: string; includeEntri
 
       if (existsSync(targetEntry)) {
         skipped.push(entry)
-        results.push({ name: entry, status: 'skipped', detail: `Target already exists: ${targetEntry}` })
+        const detail = entry === 'credentials.enc'
+          ? `Target credentials file already exists and was not overwritten: ${targetEntry}`
+          : `Target already exists: ${targetEntry}`
+        results.push({ name: entry, status: 'skipped', detail })
         continue
       }
 

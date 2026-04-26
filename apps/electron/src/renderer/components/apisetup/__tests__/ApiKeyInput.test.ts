@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  deriveDefaultModelsUrl,
   resolvePiAuthProviderForSubmit,
   resolvePresetStateForBaseUrlChange,
 } from '../submit-helpers'
@@ -57,6 +58,21 @@ describe('resolvePiAuthProviderForSubmit', () => {
 
   it('passes through non-custom presets unchanged', () => {
     expect(resolvePiAuthProviderForSubmit('google', 'anthropic')).toBe('google')
+  })
+})
+
+describe('deriveDefaultModelsUrl', () => {
+  it('appends /models for OpenAI-compatible protocols', () => {
+    expect(deriveDefaultModelsUrl('https://example.com/v1/', 'openai-completions')).toBe('https://example.com/v1/models')
+    expect(deriveDefaultModelsUrl('https://example.com/api', 'openai-responses')).toBe('https://example.com/api/models')
+  })
+
+  it('appends /v1/models for Anthropic-compatible protocol', () => {
+    expect(deriveDefaultModelsUrl('https://example.com/anthropic/', 'anthropic-messages')).toBe('https://example.com/anthropic/v1/models')
+  })
+
+  it('returns empty string when base URL is blank', () => {
+    expect(deriveDefaultModelsUrl('   ', 'openai-completions')).toBe('')
   })
 })
 

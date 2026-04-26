@@ -451,6 +451,14 @@ export interface ElectronAPI {
   setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
   /** Unified connection test — spawns a lightweight agent subprocess to validate credentials */
   testLlmConnectionSetup(params: TestLlmConnectionParams): Promise<TestLlmConnectionResult>
+  /** Manually fetch model list for a custom endpoint via main-process proxy to avoid renderer CORS/network restrictions. */
+  fetchCustomEndpointModels(params: {
+    customApi: import('@craft-agent/shared/config/llm-connections').CustomEndpointApi
+    baseUrl: string
+    apiKey?: string
+    modelsUrl?: string
+    existingConnectionSlug?: string
+  }): Promise<unknown>
   // Pi provider discovery (main process only — Pi SDK can't run in renderer)
   getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
   getPiProviderBaseUrl(provider: string): Promise<string | undefined>
