@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox';
-import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
+import type { AgentToolResult } from '@mariozechner/pi-agent-core';
+import type { ToolDefinition } from '@mariozechner/pi-coding-agent';
 import TurndownService from 'turndown';
 import { parse as parseHtml } from 'node-html-parser';
 import { join } from 'node:path';
@@ -178,7 +179,7 @@ function ensurePdfjsPolyfills(): void {
     Path2D?: new () => { addPath: () => void };
     pdfjsWorker?: unknown;
   };
-  const globalPolyfill = globalThis as PolyfilledGlobal;
+  const globalPolyfill = globalThis as unknown as PolyfilledGlobal;
 
   if (typeof globalPolyfill.DOMMatrix === 'undefined') {
     globalPolyfill.DOMMatrix = class DOMMatrix {
@@ -200,13 +201,15 @@ function ensurePdfjsPolyfills(): void {
       translate() { return new DOMMatrix(); }
       scale() { return new DOMMatrix(); }
       transformPoint(p: any) { return p || { x: 0, y: 0 }; }
+      static fromFloat32Array() { return new DOMMatrix(); }
+      static fromFloat64Array() { return new DOMMatrix(); }
       static fromMatrix() { return new DOMMatrix(); }
-    };
+    } as unknown as PolyfilledGlobal['DOMMatrix'];
   }
   if (typeof globalPolyfill.Path2D === 'undefined') {
     globalPolyfill.Path2D = class Path2D {
       addPath() {}
-    };
+    } as unknown as PolyfilledGlobal['Path2D'];
   }
 }
 
@@ -329,7 +332,7 @@ function handleText(
 
 export function createWebFetchTool(
   getSessionPath: () => string | null,
-): AgentTool<typeof schema> {
+): ToolDefinition<typeof schema> {
   async function saveBinary(buffer: Buffer, url: string, ext: string): Promise<string> {
     const sessionPath = getSessionPath();
     if (!sessionPath) throw new Error('No active session — cannot save file to disk');

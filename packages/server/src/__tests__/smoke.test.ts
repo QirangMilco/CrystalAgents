@@ -108,7 +108,7 @@ function connectWs(url: string, token: string): Promise<WebSocket> {
         token,
       }))
     })
-    ws.on('message', (data) => {
+    ws.on('message', (data: WebSocket.RawData) => {
       const msg = JSON.parse(data.toString())
       if (msg.type === 'handshake_ack') {
         resolve(ws)
@@ -118,7 +118,7 @@ function connectWs(url: string, token: string): Promise<WebSocket> {
       }
     })
     ws.on('error', reject)
-    ws.on('close', (code, reason) => {
+    ws.on('close', (code: number, reason: Buffer) => {
       reject(new Error(`WS closed: ${code} ${reason}`))
     })
   })
