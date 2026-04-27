@@ -206,6 +206,9 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
     }
   }, [connection.providerType, connection.type, connection.piAuthProvider, connection.baseUrl])
 
+  const effectiveMiniModel = getMiniModel(connection)
+  const miniModelLabel = effectiveMiniModel ? getModelShortName(effectiveMiniModel) : null
+
   // Build description with provider, default indicator, auth status, and validation state
   const getDescription = () => {
     // Show validation state if not idle
@@ -252,6 +255,11 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
           parts.push(endpoint)
         }
       }
+    }
+
+    if (miniModelLabel) {
+      const miniSuffix = connection.miniModel ? '' : ' (Auto)'
+      parts.push(`${t('settings.ai.miniModel')}: ${miniModelLabel}${miniSuffix}`)
     }
 
     // Auth status
@@ -761,6 +769,7 @@ export default function AiSettingsPage() {
       apiKey,
       baseUrl: connection.baseUrl,
       connectionDefaultModel: modelStr,
+      miniModel: connection.miniModel,
       activePreset: isCustomEndpointConnection ? 'custom' : (connection.piAuthProvider || undefined),
       models: modelIds,
       contextWindow: connection.contextWindow,
@@ -845,7 +854,6 @@ export default function AiSettingsPage() {
   }, [llmConnections])
 
   const defaultModel = defaultConnection?.defaultModel ?? ''
-  const defaultMiniModel = defaultConnection?.miniModel ?? (defaultConnection ? getMiniModel(defaultConnection) ?? '' : '')
 
   // App-level default handlers
   const handleDefaultModelChange = useCallback(async (model: string) => {
@@ -853,16 +861,6 @@ export default function AiSettingsPage() {
     // Update defaultModel on the connection, then save the full connection
     const updated = { ...defaultConnection, defaultModel: model }
     // Remove status fields that aren't part of LlmConnection
-    const { isAuthenticated: _a, authError: _b, isDefault: _c, ...connectionData } = updated
-    await window.electronAPI.saveLlmConnection(connectionData as import('../../../shared/types').LlmConnection)
-    await refreshLlmConnections()
-  }, [defaultConnection, refreshLlmConnections])
-
-  const handleDefaultMiniModelChange = useCallback(async (model: string) => {
-    if (!window.electronAPI || !defaultConnection) return
-    const options = getModelOptionsForConnection(defaultConnection)
-    if (!options.some((option) => option.value === model)) return
-    const updated = { ...defaultConnection, miniModel: model }
     const { isAuthenticated: _a, authError: _b, isDefault: _c, ...connectionData } = updated
     await window.electronAPI.saveLlmConnection(connectionData as import('../../../shared/types').LlmConnection)
     await refreshLlmConnections()
@@ -938,15 +936,6 @@ export default function AiSettingsPage() {
                     description={t("settings.ai.modelDesc")}
                     value={defaultModel}
                     onValueChange={handleDefaultModelChange}
-                    options={getModelOptionsForConnection(defaultConnection).map(o => ({
-                      ...o, description: o.descriptionKey ? t(o.descriptionKey) : o.description,
-                    }))}
-                  />
-                  <SettingsMenuSelectRow
-                    label={t('settings.ai.miniModel')}
-                    description={t('settings.ai.miniModelDesc')}
-                    value={defaultMiniModel}
-                    onValueChange={handleDefaultMiniModelChange}
                     options={getModelOptionsForConnection(defaultConnection).map(o => ({
                       ...o, description: o.descriptionKey ? t(o.descriptionKey) : o.description,
                     }))}

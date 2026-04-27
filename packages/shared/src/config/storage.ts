@@ -2582,6 +2582,7 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
     models: updates.models !== undefined ? updates.models : existing.models,
     contextWindow: updates.contextWindow !== undefined ? updates.contextWindow : existing.contextWindow,
     defaultModel: updates.defaultModel !== undefined ? updates.defaultModel : existing.defaultModel,
+    miniModel: updates.miniModel !== undefined ? updates.miniModel : existing.miniModel,
     modelSelectionMode: updates.modelSelectionMode !== undefined ? updates.modelSelectionMode : existing.modelSelectionMode,
     // Pi auth provider
     piAuthProvider: updates.piAuthProvider !== undefined ? updates.piAuthProvider : existing.piAuthProvider,
@@ -2597,6 +2598,7 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
     const afterModelIds = toModelIds(updated.models);
     const changed =
       existing.defaultModel !== updated.defaultModel ||
+      existing.miniModel !== updated.miniModel ||
       existing.modelSelectionMode !== updated.modelSelectionMode ||
       !modelSetEquals(beforeModelIds, afterModelIds);
 
@@ -2607,18 +2609,21 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
         before: {
           mode: existing.modelSelectionMode,
           defaultModel: existing.defaultModel,
+          miniModel: existing.miniModel,
           modelCount: beforeModelIds.length,
           modelsFirst5: beforeModelIds.slice(0, 5),
         },
         after: {
           mode: updated.modelSelectionMode,
           defaultModel: updated.defaultModel,
+          miniModel: updated.miniModel,
           modelCount: afterModelIds.length,
           modelsFirst5: afterModelIds.slice(0, 5),
         },
         updates: {
           keys: Object.keys(updates),
           defaultModel: updates.defaultModel,
+          miniModel: updates.miniModel,
           modelSelectionMode: updates.modelSelectionMode,
           modelsCount: Array.isArray(updates.models) ? updates.models.length : undefined,
         },

@@ -370,6 +370,7 @@ export function ApiKeyInput({
     initialPreset !== 'custom' ? initialPreset : defaultPreset.key
   )
   const [connectionDefaultModel, setConnectionDefaultModel] = useState(initialValues?.connectionDefaultModel ?? '')
+  const [miniModel, setMiniModel] = useState(initialValues?.miniModel ?? '')
   const [customModelRows, setCustomModelRows] = useState<CustomModelRow[]>(() => buildInitialCustomModelRows(initialValues))
   const [contextWindowInput, setContextWindowInput] = useState(initialValues?.contextWindow ? String(initialValues.contextWindow) : '')
   const [customApi, setCustomApi] = useState<CustomEndpointApi>(normalizeCustomApi(initialValues?.customApi))
@@ -628,6 +629,7 @@ export function ApiKeyInput({
           },
         } : {}),
         connectionDefaultModel: getSubmitModelId(parsedModels[0]),
+        miniModel: miniModel.trim() || undefined,
         models: parsedModels.length > 0 ? parsedModels : undefined,
         contextWindow: configuredContextWindow,
       })
@@ -637,6 +639,11 @@ export function ApiKeyInput({
     const effectiveBaseUrl = baseUrl.trim()
 
     const parsedModels = isDefaultProviderPreset ? parseModelList(connectionDefaultModel) : rowsToSubmitModels(customModelRows)
+    const trimmedMiniModel = miniModel.trim()
+    if (trimmedMiniModel && !parsedModels.some((model) => getSubmitModelId(model) === trimmedMiniModel)) {
+      setModelError(t('settings.ai.miniModelInvalid'))
+      return
+    }
 
     const isUsingDefaultEndpoint = isDefaultProviderPreset || !effectiveBaseUrl
     const requiresModel = !isDefaultProviderPreset && !!effectiveBaseUrl
@@ -661,6 +668,7 @@ export function ApiKeyInput({
       apiKey: apiKey.trim(),
       baseUrl: isUsingDefaultEndpoint ? undefined : effectiveBaseUrl,
       connectionDefaultModel: getSubmitModelId(parsedModels[0]),
+      miniModel: trimmedMiniModel || undefined,
       models: parsedModels.length > 0 ? parsedModels : undefined,
       contextWindow: configuredContextWindow,
       piAuthProvider: resolvedPiAuthProvider,
@@ -670,6 +678,17 @@ export function ApiKeyInput({
       customEndpoint,
     })
   }
+
+  const parsedDefaultModels = isDefaultProviderPreset || isBedrock
+    ? parseModelList(connectionDefaultModel)
+    : rowsToSubmitModels(customModelRows)
+  const miniModelOptions = parsedDefaultModels.map((model) => {
+    const id = getSubmitModelId(model) ?? ''
+    return {
+      value: id,
+      label: id,
+    }
+  }).filter((option) => !!option.value)
 
   const tierConfigs = [
     { label: t('apiSetup.modelTier.best'), desc: t('apiSetup.modelTier.bestDesc'), value: bestModel, onChange: setBestModel },
@@ -1183,6 +1202,62 @@ export function ApiKeyInput({
           )}
           {modelError && (
             <p className="text-xs text-destructive">{modelError}</p>
+          )}
+          {hasPiModels ? (
+            <div className="space-y-2">
+              <Label className="text-muted-foreground font-normal">
+                {t('settings.ai.miniModel')}
+              </Label>
+              <div className="rounded-md shadow-minimal transition-colors bg-foreground-2 px-3 py-2 text-sm text-foreground">
+                {cheapModel || 'Auto'}
+              </div>
+              <p className="text-xs text-foreground/30">
+                {t('apiSetup.modelTier.fastDesc')}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="connection-mini-model" className="text-muted-foreground font-normal">
+                {t('settings.ai.miniModel')}
+                <span className="text-foreground/30"> · {t('apiSetup.optional')}</span>
+              </Label>
+              {miniModelOptions.length > 0 ? (
+                <div className="rounded-md shadow-minimal transition-colors bg-foreground-2 focus-within:bg-background px-1 py-1">
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={isDisabled}
+                        className="flex h-9 w-full items-center justify-between rounded-md px-3 text-sm text-left hover:bg-background focus:outline-none disabled:opacity-50"
+                      >
+                        <span className="truncate text-foreground">
+                          {miniModel || 'Auto'}
+                        </span>
+                        <ChevronDown className="size-3 opacity-50 shrink-0" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <StyledDropdownMenuContent align="start" className="z-floating-menu max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
+                      <StyledDropdownMenuItem onClick={() => setMiniModel('')}>
+                        <span>Auto</span>
+                      </StyledDropdownMenuItem>
+                      {miniModelOptions.map((option) => (
+                        <StyledDropdownMenuItem key={option.value} onClick={() => setMiniModel(option.value)} className="justify-between">
+                          <span>{option.label}</span>
+                          <Check className={cn('size-3', miniModel === option.value ? 'opacity-100' : 'opacity-0')} />
+                        </StyledDropdownMenuItem>
+                      ))}
+                    </StyledDropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              ) : (
+                <div className="rounded-md shadow-minimal transition-colors bg-foreground-2 focus-within:bg-background px-3 py-2 text-sm text-muted-foreground">
+                  {t('apiSetup.defaultModelRequired')}
+                </div>
+              )}
+              <p className="text-xs text-foreground/30">
+                {t('settings.ai.miniModelDesc')}
+              </p>
+            </div>
           )}
           {(isDefaultProviderPreset || isBedrock) && (
             <p className="text-xs text-foreground/30">

@@ -845,6 +845,7 @@
   "settings.ai.inheritFromApp": "继承应用设置",
   "settings.ai.miniModel": "迷你模型",
   "settings.ai.miniModelDesc": "用于标题、摘要和轻量补全。",
+  "settings.ai.miniModelInvalid": "迷你模型必须来自当前连接的可用模型列表。",
   "settings.ai.model": "模型",
   "settings.ai.modelDesc": "新聊天的 AI 模型",
   "settings.ai.noConnections": "未配置连接。添加连接以开始。",

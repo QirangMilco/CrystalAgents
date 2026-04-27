@@ -845,6 +845,7 @@
   "settings.ai.inheritFromApp": "Inherit from app settings",
   "settings.ai.miniModel": "Mini model",
   "settings.ai.miniModelDesc": "Used for titles, summaries, and utility completions.",
+  "settings.ai.miniModelInvalid": "Mini model must be one of the connection's available models.",
   "settings.ai.model": "Model",
   "settings.ai.modelDesc": "AI model for new chats",
   "settings.ai.noConnections": "No connections configured. Add a connection to get started.",
