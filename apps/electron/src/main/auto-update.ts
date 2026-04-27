@@ -20,7 +20,6 @@ import { platform } from 'os'
 import * as path from 'path'
 import * as fs from 'fs'
 import { mainLog } from './logger'
-import { getAppVersion } from '@craft-agent/shared/version'
 import {
   getDismissedUpdateVersion,
   clearDismissedUpdateVersion,
@@ -57,7 +56,7 @@ function getUpdateCacheDir(): string {
 // Module state — keeps track of update info for IPC queries
 let updateInfo: UpdateInfo = {
   available: false,
-  currentVersion: getAppVersion(),
+  currentVersion: app.getVersion(),
   latestVersion: null,
   downloadState: 'idle',
   downloadProgress: 0,
