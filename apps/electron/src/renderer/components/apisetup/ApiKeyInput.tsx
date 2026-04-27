@@ -22,7 +22,7 @@ import {
   StyledDropdownMenuItem,
 } from "@/components/ui/styled-dropdown"
 import { cn } from "@/lib/utils"
-import { Check, ChevronDown, Eye, EyeOff, Loader2, RefreshCw } from "lucide-react"
+import { Check, ChevronDown, Eye, EyeOff, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { pickTierDefaults, resolveTierModels, type PiModelInfo } from "./tier-models"
 import {
   deriveDefaultModelsUrl,
@@ -32,17 +32,26 @@ import {
 } from "./submit-helpers"
 
 import type { CustomEndpointApi, CustomEndpointConfig } from '@config/llm-connections'
+import type { ModelDefinition } from '@config/models'
 
 export type ApiKeyStatus = 'idle' | 'validating' | 'success' | 'error'
 
 export type { CustomEndpointApi }
+
+type SubmitModel = string | ModelDefinition
+
+type CustomModelRow = {
+  id: string
+  contextWindow: string
+}
 
 export interface ApiKeySubmitData {
   apiKey: string
   baseUrl?: string
   connectionDefaultModel?: string
   miniModel?: string
-  models?: string[]
+  models?: SubmitModel[]
+  contextWindow?: number
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
   /** Custom endpoint protocol — set when user configures an arbitrary API endpoint */
@@ -81,7 +90,8 @@ export interface ApiKeyInputProps {
     connectionDefaultModel?: string
     miniModel?: string
     activePreset?: string
-    models?: string[]
+    models?: SubmitModel[]
+    contextWindow?: number
     /** Pre-fill the protocol toggle for custom endpoints */
     customApi?: CustomEndpointApi
     modelsUrl?: string
@@ -161,11 +171,53 @@ function getPresetForUrl(url: string, presets: Preset[]): PresetKey {
   return match?.key ?? 'custom'
 }
 
-function parseModelList(value: string): string[] {
+function parseModelList(value: string): SubmitModel[] {
   return value
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
+    .map((entry) => {
+      const match = entry.match(/^(.+?)\s*@\s*(\d+)$/)
+      if (!match?.[1] || !match?.[2]) return entry
+      return {
+        id: match[1].trim(),
+        contextWindow: Number(match[2]),
+      } satisfies ModelDefinition
+    })
+}
+
+function getSubmitModelId(model: SubmitModel | undefined): string | undefined {
+  return typeof model === 'string' ? model : model?.id
+}
+
+function submitModelToRow(model: SubmitModel): CustomModelRow {
+  return typeof model === 'string'
+    ? { id: model, contextWindow: '' }
+    : { id: model.id, contextWindow: model.contextWindow ? String(model.contextWindow) : '' }
+}
+
+function rowToSubmitModel(row: CustomModelRow): SubmitModel | null {
+  const id = row.id.trim()
+  if (!id) return null
+  const contextWindow = Number(row.contextWindow.trim())
+  if (Number.isFinite(contextWindow) && contextWindow > 0) {
+    return { id, contextWindow: Math.round(contextWindow) }
+  }
+  return id
+}
+
+function rowsToSubmitModels(rows: CustomModelRow[]): SubmitModel[] {
+  return rows
+    .map(rowToSubmitModel)
+    .filter((model): model is SubmitModel => model != null)
+}
+
+function buildInitialCustomModelRows(initialValues?: ApiKeyInputProps['initialValues']): CustomModelRow[] {
+  if (initialValues?.models?.length) {
+    return initialValues.models.map(submitModelToRow)
+  }
+  const parsed = parseModelList(initialValues?.connectionDefaultModel ?? '')
+  return parsed.length > 0 ? parsed.map(submitModelToRow) : [{ id: '', contextWindow: '' }]
 }
 
 function normalizeCustomApi(api?: string): CustomEndpointApi {
@@ -318,6 +370,8 @@ export function ApiKeyInput({
     initialPreset !== 'custom' ? initialPreset : defaultPreset.key
   )
   const [connectionDefaultModel, setConnectionDefaultModel] = useState(initialValues?.connectionDefaultModel ?? '')
+  const [customModelRows, setCustomModelRows] = useState<CustomModelRow[]>(() => buildInitialCustomModelRows(initialValues))
+  const [contextWindowInput, setContextWindowInput] = useState(initialValues?.contextWindow ? String(initialValues.contextWindow) : '')
   const [customApi, setCustomApi] = useState<CustomEndpointApi>(normalizeCustomApi(initialValues?.customApi))
   const [isModelsUrlManuallyEdited, setIsModelsUrlManuallyEdited] = useState(!!initialValues?.modelsUrl?.trim())
   const [modelsUrl, setModelsUrl] = useState(() => initialValues?.modelsUrl?.trim() || deriveDefaultModelsUrl(initialValues?.baseUrl ?? defaultPreset.url, normalizeCustomApi(initialValues?.customApi)))
@@ -431,7 +485,8 @@ export function ApiKeyInput({
         modelCount: models.length,
         models,
       })
-      setConnectionDefaultModel(models.join(', '))
+      setCustomModelRows(models.map((id) => ({ id, contextWindow: '' })))
+      setConnectionDefaultModel(models[0] ?? '')
     } catch (error) {
       debugFetchModels('[fetch-models] final-error', {
         customApi,
@@ -499,8 +554,17 @@ export function ApiKeyInput({
     }
   }
 
+  const parseContextWindowInput = () => {
+    const trimmed = contextWindowInput.trim().replace(/,/g, '')
+    if (!trimmed) return undefined
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    const configuredContextWindow = parseContextWindowInput()
 
     const effectivePiAuthProvider = isPiApiKeyFlow
       ? resolvePiAuthProviderForSubmit(activePreset, lastNonCustomPreset)
@@ -512,13 +576,27 @@ export function ApiKeyInput({
         setModelError(t('apiSetup.modelTier.selectAllRequired'))
         return
       }
-      const models: string[] = [bestModel, defaultModel, cheapModel]
+      const modelInfoById = new Map(piModels.map(model => [model.id, model]))
+      const models: SubmitModel[] = [bestModel, defaultModel, cheapModel].map(modelId => {
+        const modelInfo = modelInfoById.get(modelId)
+        if (!modelInfo) return modelId
+        return {
+          id: modelInfo.id,
+          name: modelInfo.name,
+          shortName: modelInfo.name,
+          description: '',
+          provider: 'pi',
+          contextWindow: modelInfo.contextWindow,
+          supportsThinking: modelInfo.reasoning,
+        }
+      })
       onSubmit({
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim() || undefined,
         connectionDefaultModel: bestModel,
         miniModel: cheapModel,
         models,
+        contextWindow: configuredContextWindow,
         piAuthProvider: effectivePiAuthProvider,
         modelSelectionMode: 'userDefined3Tier',
       })
@@ -549,15 +627,16 @@ export function ApiKeyInput({
             ...(awsSessionToken.trim() ? { sessionToken: awsSessionToken.trim() } : {}),
           },
         } : {}),
-        connectionDefaultModel: parsedModels[0],
+        connectionDefaultModel: getSubmitModelId(parsedModels[0]),
         models: parsedModels.length > 0 ? parsedModels : undefined,
+        contextWindow: configuredContextWindow,
       })
       return
     }
 
     const effectiveBaseUrl = baseUrl.trim()
 
-    const parsedModels = parseModelList(connectionDefaultModel)
+    const parsedModels = isDefaultProviderPreset ? parseModelList(connectionDefaultModel) : rowsToSubmitModels(customModelRows)
 
     const isUsingDefaultEndpoint = isDefaultProviderPreset || !effectiveBaseUrl
     const requiresModel = !isDefaultProviderPreset && !!effectiveBaseUrl
@@ -581,8 +660,9 @@ export function ApiKeyInput({
     onSubmit({
       apiKey: apiKey.trim(),
       baseUrl: isUsingDefaultEndpoint ? undefined : effectiveBaseUrl,
-      connectionDefaultModel: parsedModels[0],
+      connectionDefaultModel: getSubmitModelId(parsedModels[0]),
       models: parsedModels.length > 0 ? parsedModels : undefined,
+      contextWindow: configuredContextWindow,
       piAuthProvider: resolvedPiAuthProvider,
       modelSelectionMode: isPiApiKeyFlow
         ? (parsedModels.length > 0 ? 'userDefined3Tier' : 'automaticallySyncedFromProvider')
@@ -984,9 +1064,33 @@ export function ApiKeyInput({
               </p>
             </div>
           )}
+          <div className="space-y-2">
+            <Label htmlFor="connection-context-window" className="text-muted-foreground font-normal">
+              {t('apiSetup.contextWindow')}
+            </Label>
+            <div className={cn(
+              "rounded-md shadow-minimal transition-colors",
+              "bg-foreground-2 focus-within:bg-background"
+            )}>
+              <Input
+                id="connection-context-window"
+                type="number"
+                value={contextWindowInput}
+                onChange={(e) => setContextWindowInput(e.target.value)}
+                placeholder="131072"
+                min={1}
+                step={1024}
+                className="border-0 bg-transparent shadow-none"
+                disabled={isDisabled}
+              />
+            </div>
+            <p className="text-xs text-foreground/30">
+              {t('apiSetup.contextWindowHelpText')}
+            </p>
+          </div>
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor="connection-default-model" className="text-muted-foreground font-normal">
-              {t('apiSetup.defaultModel')}{' '}
+              {isDefaultProviderPreset || isBedrock ? t('apiSetup.defaultModel') : t('apiSetup.modelList')}{' '}
               <span className="text-foreground/30">
                 · {!isBedrock && baseUrl.trim() ? t('apiSetup.required') : t('apiSetup.optional')}
               </span>
@@ -1003,30 +1107,88 @@ export function ApiKeyInput({
               </button>
             )}
           </div>
-          <div className={cn(
-            "rounded-md shadow-minimal transition-colors",
-            "bg-foreground-2 focus-within:bg-background",
-            modelError && "ring-1 ring-destructive/40"
-          )}>
-            <Input
-              id="connection-default-model"
-              type="text"
-              value={connectionDefaultModel}
-              onChange={(e) => {
-                setConnectionDefaultModel(e.target.value)
-                setModelError(null)
-              }}
-              placeholder={t('apiSetup.defaultModelPlaceholder')}
-              className="border-0 bg-transparent shadow-none"
-              disabled={isDisabled}
-            />
-          </div>
+          {isDefaultProviderPreset || isBedrock ? (
+            <div className={cn(
+              "rounded-md shadow-minimal transition-colors",
+              "bg-foreground-2 focus-within:bg-background",
+              modelError && "ring-1 ring-destructive/40"
+            )}>
+              <Input
+                id="connection-default-model"
+                type="text"
+                value={connectionDefaultModel}
+                onChange={(e) => {
+                  setConnectionDefaultModel(e.target.value)
+                  setModelError(null)
+                }}
+                placeholder={t('apiSetup.defaultModelPlaceholder')}
+                className="border-0 bg-transparent shadow-none"
+                disabled={isDisabled}
+              />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {customModelRows.map((row, index) => (
+                <div key={index} className="grid grid-cols-[1fr_140px_auto] gap-2 items-center">
+                  <div className={cn(
+                    "rounded-md shadow-minimal transition-colors",
+                    "bg-foreground-2 focus-within:bg-background",
+                    modelError && index === 0 && "ring-1 ring-destructive/40"
+                  )}>
+                    <Input
+                      type="text"
+                      value={row.id}
+                      onChange={(e) => {
+                        setCustomModelRows(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, id: e.target.value } : item))
+                        setModelError(null)
+                      }}
+                      placeholder={t('apiSetup.modelIdPlaceholder')}
+                      className="border-0 bg-transparent shadow-none"
+                      disabled={isDisabled}
+                    />
+                  </div>
+                  <div className="rounded-md shadow-minimal transition-colors bg-foreground-2 focus-within:bg-background">
+                    <Input
+                      type="number"
+                      value={row.contextWindow}
+                      onChange={(e) => setCustomModelRows(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, contextWindow: e.target.value } : item))}
+                      placeholder={contextWindowInput.trim() || '131072'}
+                      min={1}
+                      step={1024}
+                      className="border-0 bg-transparent shadow-none"
+                      disabled={isDisabled}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCustomModelRows(prev => prev.length > 1 ? prev.filter((_, itemIndex) => itemIndex !== index) : [{ id: '', contextWindow: '' }])}
+                    disabled={isDisabled}
+                    className="flex h-9 w-9 items-center justify-center rounded-md bg-background shadow-minimal text-foreground/40 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label={t('apiSetup.removeModel')}
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setCustomModelRows(prev => [...prev, { id: '', contextWindow: '' }])}
+                disabled={isDisabled}
+                className="flex h-8 items-center gap-1.5 rounded-md bg-background shadow-minimal px-2 text-xs font-medium text-foreground/50 hover:bg-foreground/5 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus className="size-3.5" />
+                {t('apiSetup.addModel')}
+              </button>
+            </div>
+          )}
           {modelError && (
             <p className="text-xs text-destructive">{modelError}</p>
           )}
-          <p className="text-xs text-foreground/30">
-            {t('apiSetup.defaultModelHelpText')}
-          </p>
+          {(isDefaultProviderPreset || isBedrock) && (
+            <p className="text-xs text-foreground/30">
+              {t('apiSetup.defaultModelHelpText')}
+            </p>
+          )}
           {(activePreset === 'custom' || !activePreset) && (
             <p className="text-xs text-foreground/30">
               {t('apiSetup.customEndpointModelHelpText')}

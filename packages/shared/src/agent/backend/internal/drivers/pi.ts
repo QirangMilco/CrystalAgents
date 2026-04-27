@@ -101,6 +101,7 @@ async function listModelsViaHttp(
 
 /** Model ID prefixes to exclude — legacy models that clutter the selector. */
 const EXCLUDED_MODEL_PREFIXES = ['gpt-4', 'gpt-3.5'];
+const DEFAULT_CUSTOM_ENDPOINT_CONTEXT_WINDOW = 131_072;
 
 /** Filter raw models to only those explicitly enabled by policy, excluding legacy models. */
 function filterEnabledModels(models: RawCopilotModel[]): RawCopilotModel[] {
@@ -224,6 +225,46 @@ async function testAnthropicCompatible(
   }
 }
 
+function normalizeModelIdForLookup(modelId: string): string[] {
+  const withoutPiPrefix = modelId.startsWith('pi/') ? modelId.slice(3) : modelId;
+  return [modelId, withoutPiPrefix, `pi/${withoutPiPrefix}`];
+}
+
+function buildCustomModelsForRuntime(connection: Parameters<ProviderDriver['buildRuntime']>[0]['context']['connection']): Array<string | { id: string; contextWindow?: number; supportsImages?: boolean }> | undefined {
+  const configuredModels = connection?.models?.length
+    ? connection.models
+    : [connection?.defaultModel, connection?.miniModel].filter((model): model is string => !!model);
+  if (!configuredModels.length) return undefined;
+  const fallbackContextWindow = connection?.contextWindow ?? (connection?.customEndpoint ? DEFAULT_CUSTOM_ENDPOINT_CONTEXT_WINDOW : undefined);
+
+  const providerModels = connection?.piAuthProvider
+    ? getPiModelsForAuthProvider(connection.piAuthProvider)
+    : [];
+  const providerModelById = new Map<string, ModelDefinition>();
+  for (const model of providerModels) {
+    for (const key of normalizeModelIdForLookup(model.id)) {
+      providerModelById.set(key, model);
+    }
+  }
+
+  return configuredModels.map(m => {
+    const id = typeof m === 'string' ? m : m.id;
+    const supportsImages = typeof m === 'object' && 'supportsImages' in m && m.supportsImages === true;
+    const explicitContextWindow = typeof m === 'object' ? m.contextWindow : undefined;
+    const providerContextWindow = providerModelById.get(id)?.contextWindow;
+    const contextWindow = explicitContextWindow ?? providerContextWindow ?? fallbackContextWindow;
+
+    if (contextWindow || supportsImages) {
+      return {
+        id,
+        ...(contextWindow ? { contextWindow } : {}),
+        ...(supportsImages ? { supportsImages: true } : {}),
+      };
+    }
+    return id;
+  });
+}
+
 export const piDriver: ProviderDriver = {
   provider: 'pi',
   buildRuntime: ({ context, providerOptions, resolvedPaths }) => ({
@@ -235,18 +276,7 @@ export const piDriver: ProviderDriver = {
     piAuthProvider: providerOptions?.piAuthProvider || context.connection?.piAuthProvider,
     baseUrl: context.connection?.baseUrl,
     customEndpoint: context.connection?.customEndpoint,
-    customModels: context.connection?.models?.map(m => {
-      if (typeof m === 'string') return m;
-      const supportsImages = 'supportsImages' in m && m.supportsImages === true
-      if (m.contextWindow || supportsImages) {
-        return {
-          id: m.id,
-          ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
-          ...(supportsImages ? { supportsImages: true } : {}),
-        }
-      }
-      return m.id;
-    }),
+    customModels: buildCustomModelsForRuntime(context.connection),
   }),
   fetchModels: async ({ connection, credentials, timeoutMs }) => {
     // Copilot OAuth: fetch models directly from the Copilot API via HTTP.

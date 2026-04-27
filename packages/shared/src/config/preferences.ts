@@ -34,6 +34,21 @@ export interface UserPreferences {
   diffViewer?: DiffViewerPreferences;
   // Whether to include Co-Authored-By trailer on git commits (default: true)
   includeCoAuthoredBy?: boolean;
+  // Chat input context usage display preferences
+  contextUsageDisplay?: {
+    showCurrent?: boolean;
+    showMax?: boolean;
+    showUsagePercent?: boolean;
+    showThreshold?: boolean;
+    showCacheHit?: boolean;
+    showCacheHitPercent?: boolean;
+    showCacheMiss?: boolean;
+    showCacheWrite?: boolean;
+    // Legacy fields retained for backward compatibility with existing preferences.json files.
+    showCache?: boolean;
+    showPercent?: boolean;
+    mode?: 'compact' | 'detailed';
+  };
   // When the preferences were last updated
   updatedAt?: number;
 }

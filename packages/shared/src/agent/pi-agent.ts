@@ -15,6 +15,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
@@ -74,6 +75,7 @@ import {
 } from '@craft-agent/session-tools-core';
 import { createClaudeContext, type SessionToolContext } from './claude-context.ts';
 import { getPermissionModeDiagnostics } from './mode-manager.ts';
+import { debugContextWindow } from '../utils/debug.ts';
 
 // call_llm pre-execution pipeline
 
@@ -204,6 +206,25 @@ import { saveBinaryResponse } from '../utils/binary-detection.ts';
 // ============================================================
 // PiAgent Implementation
 // ============================================================
+
+type PiRuntimeCustomModel = string | { id: string; contextWindow?: number; supportsImages?: boolean };
+
+function getRuntimeCustomModels(runtime: Record<string, unknown> | undefined): PiRuntimeCustomModel[] {
+  const customModels = runtime?.customModels;
+  return Array.isArray(customModels) ? customModels as PiRuntimeCustomModel[] : [];
+}
+
+function resolvePiRuntimeContextWindow(runtime: Record<string, unknown> | undefined, modelId: string): number | undefined {
+  const withoutPiPrefix = modelId.startsWith('pi/') ? modelId.slice(3) : modelId;
+  const candidates = new Set([modelId, withoutPiPrefix, `pi/${withoutPiPrefix}`]);
+  for (const model of getRuntimeCustomModels(runtime)) {
+    if (typeof model === 'string') continue;
+    if (candidates.has(model.id) && typeof model.contextWindow === 'number') {
+      return model.contextWindow;
+    }
+  }
+  return undefined;
+}
 
 /** Backend-executed session tools currently supported by PiAgent. */
 export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
@@ -396,14 +417,31 @@ export class PiAgent extends BaseAgent {
   constructor(config: BackendConfig) {
     const resolvedModel = config.model || '';
     const modelDef = getModelById(resolvedModel);
-    super(config, resolvedModel, modelDef?.contextWindow);
+    const runtimeContextWindow = resolvePiRuntimeContextWindow(config.runtime, resolvedModel);
+    const effectiveContextWindow = modelDef?.contextWindow ?? runtimeContextWindow;
+    super(config, resolvedModel, effectiveContextWindow);
+
+    debugContextWindow('PiAgent constructor', {
+      sessionId: config.session?.id,
+      model: resolvedModel,
+      staticContextWindow: modelDef?.contextWindow,
+      runtimeContextWindow,
+      runtimeCustomModelCount: getRuntimeCustomModels(config.runtime).length,
+      source: modelDef?.contextWindow ? 'model-registry' : runtimeContextWindow ? 'runtime-custom-models' : 'none',
+    });
 
     this._supportsBranching = true;
 
     this.piSessionId = config.session?.sdkSessionId || null;
     this.adapter = new PiEventAdapter();
-    if (modelDef?.contextWindow) {
-      this.adapter.setContextWindow(modelDef.contextWindow);
+    if (effectiveContextWindow) {
+      this.adapter.setContextWindow(effectiveContextWindow);
+      debugContextWindow('PiAgent adapter seeded contextWindow', {
+        sessionId: config.session?.id,
+        model: resolvedModel,
+        contextWindow: effectiveContextWindow,
+        source: modelDef?.contextWindow ? 'model-registry' : 'runtime-custom-models',
+      });
     }
     if (config.miniModel) {
       this.adapter.setMiniModel(config.miniModel);
@@ -530,6 +568,7 @@ export class PiAgent extends BaseAgent {
         // Propagate debug mode
         CRAFT_DEBUG: (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1') ? '1' : '0',
         CRAFT_DEBUG_SUBMIT_PLAN: process.env.CRAFT_DEBUG_SUBMIT_PLAN ?? '0',
+        CRAFT_DEBUG_DEEPSEEK_CACHE: process.env.CRAFT_DEBUG_DEEPSEEK_CACHE ?? '0',
       },
     });
 
@@ -554,6 +593,17 @@ export class PiAgent extends BaseAgent {
       const trimmed = text.trim();
       if (trimmed) {
         this.debug(`[subprocess stderr] ${trimmed}`);
+        if ((process.env.CRAFT_DEBUG_CONTEXT_WINDOW === '1' && trimmed.includes('[context-window]')) ||
+            (process.env.CRAFT_DEBUG_DEEPSEEK_CACHE === '1' && trimmed.includes('[deepseek-cache]'))) {
+          try {
+            const logPath = getCraftMainLogPath();
+            mkdirSync(dirname(logPath), { recursive: true });
+            appendFileSync(logPath, text, 'utf8');
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.debug(`Failed to mirror debug stderr to main.log: ${message}`);
+          }
+        }
       }
     });
 
@@ -2291,6 +2341,27 @@ export class PiAgent extends BaseAgent {
   override setModel(model: string): void {
     const previousModel = this.getModel();
     super.setModel(model);
+    const modelDef = getModelById(model);
+    const runtimeContextWindow = resolvePiRuntimeContextWindow(this.config.runtime, model);
+    const effectiveContextWindow = modelDef?.contextWindow ?? runtimeContextWindow;
+    debugContextWindow('PiAgent setModel', {
+      sessionId: this.config.session?.id,
+      previousModel,
+      model,
+      staticContextWindow: modelDef?.contextWindow,
+      runtimeContextWindow,
+      runtimeCustomModelCount: getRuntimeCustomModels(this.config.runtime).length,
+      source: modelDef?.contextWindow ? 'model-registry' : runtimeContextWindow ? 'runtime-custom-models' : 'none',
+    });
+    if (effectiveContextWindow) {
+      this.adapter.setContextWindow(effectiveContextWindow);
+      debugContextWindow('PiAgent adapter reseeded contextWindow', {
+        sessionId: this.config.session?.id,
+        model,
+        contextWindow: effectiveContextWindow,
+        source: modelDef?.contextWindow ? 'model-registry' : 'runtime-custom-models',
+      });
+    }
     // Forward to subprocess so it uses the new model on next turn
     if (this.subprocess) {
       this.debug(`Forwarding model change to subprocess: ${previousModel} → ${model}`);

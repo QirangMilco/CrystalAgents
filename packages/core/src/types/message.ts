@@ -529,6 +529,7 @@ export interface AgentEventUsage {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  cacheMissTokens?: number;
   costUsd?: number;
   /** Model's context window size in tokens (from SDK modelUsage) */
   contextWindow?: number;
@@ -570,7 +571,7 @@ export type AgentEvent =
   | { type: 'task_completed'; taskId: string; status: 'completed' | 'failed' | 'stopped'; outputFile?: string; summary?: string; turnId?: string }
   | { type: 'shell_killed'; shellId: string; turnId?: string }
   | { type: 'source_activated'; sourceSlug: string; originalMessage: string }
-  | { type: 'usage_update'; usage: Pick<AgentEventUsage, 'inputTokens' | 'contextWindow'> }
+  | { type: 'usage_update'; usage: Pick<AgentEventUsage, 'inputTokens' | 'contextWindow' | 'cacheReadTokens' | 'cacheCreationTokens' | 'cacheMissTokens'> }
   | { type: 'steer_undelivered'; message: string };
 
 /**

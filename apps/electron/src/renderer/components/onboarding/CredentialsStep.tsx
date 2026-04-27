@@ -18,6 +18,7 @@ import {
   type OAuthStatus,
 } from "../apisetup"
 import type { CustomEndpointApi } from '@config/llm-connections'
+import type { ModelDefinition } from '@config/models'
 
 export type CredentialStatus = ApiKeyStatus | OAuthStatus
 
@@ -40,7 +41,8 @@ interface CredentialsStepProps {
     baseUrl?: string
     connectionDefaultModel?: string
     activePreset?: string
-    models?: string[]
+    models?: Array<string | ModelDefinition>
+    contextWindow?: number
     customApi?: CustomEndpointApi
     modelsUrl?: string
   }

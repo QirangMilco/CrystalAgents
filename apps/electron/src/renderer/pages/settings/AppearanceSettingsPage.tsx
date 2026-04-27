@@ -40,6 +40,40 @@ export const meta: DetailsPageMeta = {
   slug: 'appearance',
 }
 
+type ContextUsageDisplayMode = 'compact' | 'detailed'
+
+interface ContextUsageDisplayPreferences {
+  showCurrent: boolean
+  showMax: boolean
+  showUsagePercent: boolean
+  showThreshold: boolean
+  showCacheHit: boolean
+  showCacheHitPercent: boolean
+  showCacheMiss: boolean
+  showCacheWrite: boolean
+  mode: ContextUsageDisplayMode
+}
+
+const defaultContextUsageDisplay: ContextUsageDisplayPreferences = {
+  showCurrent: true,
+  showMax: true,
+  showUsagePercent: true,
+  showThreshold: true,
+  showCacheHit: true,
+  showCacheHitPercent: true,
+  showCacheMiss: false,
+  showCacheWrite: false,
+  mode: 'compact',
+}
+
+const parsePreferencesJson = (content: string): Record<string, unknown> => {
+  try {
+    return JSON.parse(content || '{}')
+  } catch {
+    return {}
+  }
+}
+
 // ============================================
 // Tool Icons Table
 // ============================================
@@ -133,6 +167,10 @@ export default function AppearanceSettingsPage() {
     storage.get(storage.KEYS.showConnectionIcons, true)
   )
 
+  // Chat context usage display preferences (stored in preferences.json; display-only user preference)
+  const [preferencesJson, setPreferencesJson] = useState<Record<string, unknown>>({})
+  const [contextUsageDisplay, setContextUsageDisplay] = useState<ContextUsageDisplayPreferences>(defaultContextUsageDisplay)
+
   // Focus mode hover panel delays (ms)
   const [focusPeekOpenDelayMs, setFocusPeekOpenDelayMs] = useState(() =>
     storage.get(storage.KEYS.focusPeekOpenDelayMs, 150)
@@ -147,6 +185,35 @@ export default function AppearanceSettingsPage() {
     setShowConnectionIcons(checked)
     storage.set(storage.KEYS.showConnectionIcons, checked)
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI?.readPreferences?.().then(({ content }) => {
+      if (cancelled) return
+      const parsed = parsePreferencesJson(content)
+      setPreferencesJson(parsed)
+      setContextUsageDisplay({
+        ...defaultContextUsageDisplay,
+        ...((parsed.contextUsageDisplay as Partial<ContextUsageDisplayPreferences> | undefined) ?? {}),
+      })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  const updateContextUsageDisplay = useCallback(async <K extends keyof ContextUsageDisplayPreferences>(field: K, value: ContextUsageDisplayPreferences[K]) => {
+    const next = {
+      ...contextUsageDisplay,
+      [field]: value,
+    }
+    const nextPrefs = {
+      ...preferencesJson,
+      contextUsageDisplay: next,
+      updatedAt: Date.now(),
+    }
+    setContextUsageDisplay(next)
+    setPreferencesJson(nextPrefs)
+    await window.electronAPI?.writePreferences?.(JSON.stringify(nextPrefs, null, 2))
+  }, [contextUsageDisplay, preferencesJson])
 
   const clampFocusDelay = useCallback((value: number) => Math.min(600, Math.max(0, Math.round(value))), [])
 
@@ -460,6 +527,83 @@ export default function AppearanceSettingsPage() {
                     description={t("settings.appearance.richToolDescriptionsDesc")}
                     checked={richToolDescriptions}
                     onCheckedChange={handleRichToolDescriptionsChange}
+                  />
+                </SettingsCard>
+              </SettingsSection>
+
+              <SettingsSection
+                title={t("settings.appearance.contextUsageDisplay")}
+                description={t("settings.appearance.contextUsageDisplayDesc")}
+              >
+                <SettingsCard divided>
+                  <SettingsRow
+                    label={t("settings.appearance.contextUsageMode")}
+                    description={t("settings.appearance.contextUsageModeDesc")}
+                  >
+                    <SettingsSegmentedControl
+                      value={contextUsageDisplay.mode}
+                      onValueChange={(value) => updateContextUsageDisplay('mode', value as ContextUsageDisplayMode)}
+                      options={[
+                        { value: 'compact', label: t("settings.appearance.contextUsageModeCompact") },
+                        { value: 'detailed', label: t("settings.appearance.contextUsageModeDetailed") },
+                      ]}
+                    />
+                  </SettingsRow>
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowCurrent")}
+                    description={t("settings.appearance.contextUsageShowCurrentDesc")}
+                    checked={contextUsageDisplay.showCurrent}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showCurrent', checked)}
+                    inCard
+                  />
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowMax")}
+                    description={t("settings.appearance.contextUsageShowMaxDesc")}
+                    checked={contextUsageDisplay.showMax}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showMax', checked)}
+                    inCard
+                  />
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowUsagePercent")}
+                    description={t("settings.appearance.contextUsageShowUsagePercentDesc")}
+                    checked={contextUsageDisplay.showUsagePercent}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showUsagePercent', checked)}
+                    inCard
+                  />
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowThreshold")}
+                    description={t("settings.appearance.contextUsageShowThresholdDesc")}
+                    checked={contextUsageDisplay.showThreshold}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showThreshold', checked)}
+                    inCard
+                  />
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowCacheHit")}
+                    description={t("settings.appearance.contextUsageShowCacheHitDesc")}
+                    checked={contextUsageDisplay.showCacheHit}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showCacheHit', checked)}
+                    inCard
+                  />
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowCacheHitPercent")}
+                    description={t("settings.appearance.contextUsageShowCacheHitPercentDesc")}
+                    checked={contextUsageDisplay.showCacheHitPercent}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showCacheHitPercent', checked)}
+                    inCard
+                  />
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowCacheMiss")}
+                    description={t("settings.appearance.contextUsageShowCacheMissDesc")}
+                    checked={contextUsageDisplay.showCacheMiss}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showCacheMiss', checked)}
+                    inCard
+                  />
+                  <SettingsToggle
+                    label={t("settings.appearance.contextUsageShowCacheWrite")}
+                    description={t("settings.appearance.contextUsageShowCacheWriteDesc")}
+                    checked={contextUsageDisplay.showCacheWrite}
+                    onCheckedChange={(checked) => updateContextUsageDisplay('showCacheWrite', checked)}
+                    inCard
                   />
                 </SettingsCard>
               </SettingsSection>

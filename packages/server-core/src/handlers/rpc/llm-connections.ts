@@ -102,6 +102,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       if (setup.models !== undefined) {
         updates.models = setup.models ?? undefined
       }
+      if (setup.contextWindow !== undefined) {
+        updates.contextWindow = setup.contextWindow ?? undefined
+      }
       if (setup.modelSelectionMode !== undefined) {
         updates.modelSelectionMode = setup.modelSelectionMode
       }

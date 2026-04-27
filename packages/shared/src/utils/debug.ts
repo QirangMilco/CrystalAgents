@@ -30,6 +30,22 @@ function detectEnvironment(): Environment {
 
 let electronLog: unknown | null = null;
 let electronLogChecked = false;
+let nodeFs: { appendFileSync?: (path: string, data: string, encoding?: string) => void; mkdirSync?: (path: string, options?: { recursive?: boolean }) => void } | null = null;
+let nodePath: { dirname?: (path: string) => string } | null = null;
+let nodeModulesChecked = false;
+
+function getNodeRequire(): ((id: string) => unknown) | undefined {
+  return Function('return typeof require !== "undefined" ? require : undefined')() as
+    | ((id: string) => unknown)
+    | undefined;
+}
+
+function getNodeBuiltinModule(id: string): unknown {
+  const getter = (typeof process !== 'undefined'
+    ? (process as NodeJS.Process & { getBuiltinModule?: (moduleName: string) => unknown }).getBuiltinModule
+    : undefined);
+  return getter?.(id);
+}
 
 function getElectronLog(): { info?: (message: string) => void } | null {
   if (electronLogChecked) {
@@ -45,15 +61,42 @@ function getElectronLog(): { info?: (message: string) => void } | null {
   try {
     // Optional dependency - only available in Electron main process.
     // Use indirect require so Vite renderer dependency scanning does not try to resolve electron-log/main.
-    const nodeRequire = Function('return typeof require !== "undefined" ? require : undefined')() as
-      | ((id: string) => unknown)
-      | undefined;
-    const loaded = nodeRequire?.('electron-log/main') as { default?: unknown } | unknown;
+    const loaded = getNodeRequire()?.('electron-log/main') as { default?: unknown } | unknown;
     electronLog = (loaded as { default?: unknown })?.default ?? loaded ?? null;
   } catch {
     electronLog = null;
   }
   return (electronLog as { info?: (message: string) => void } | null) ?? null;
+}
+
+function getNodeModules(): {
+  fs: { appendFileSync?: (path: string, data: string, encoding?: string) => void; mkdirSync?: (path: string, options?: { recursive?: boolean }) => void } | null;
+  path: { dirname?: (path: string) => string } | null;
+} {
+  if (nodeModulesChecked) {
+    return { fs: nodeFs, path: nodePath };
+  }
+  nodeModulesChecked = true;
+
+  try {
+    nodeFs = (getNodeBuiltinModule('node:fs') as typeof nodeFs)
+      ?? (getNodeBuiltinModule('fs') as typeof nodeFs)
+      ?? (getNodeRequire()?.('node:fs') as typeof nodeFs)
+      ?? null;
+  } catch {
+    nodeFs = null;
+  }
+
+  try {
+    nodePath = (getNodeBuiltinModule('node:path') as typeof nodePath)
+      ?? (getNodeBuiltinModule('path') as typeof nodePath)
+      ?? (getNodeRequire()?.('node:path') as typeof nodePath)
+      ?? null;
+  } catch {
+    nodePath = null;
+  }
+
+  return { fs: nodeFs, path: nodePath };
 }
 
 /**
@@ -131,6 +174,40 @@ function output(formatted: string): void {
   }
 }
 
+function appendToMainLog(formatted: string): void {
+  if (typeof process === 'undefined') return;
+  const env = detectEnvironment();
+  if (env === 'electron-renderer') return;
+
+  try {
+    const { fs, path } = getNodeModules();
+    const logsDir = process.env?.CRAFT_LOGS_DIR?.trim();
+    const configDir = process.env?.CRAFT_CONFIG_DIR?.trim();
+    const electronUserDataDir = process.env?.CRAFT_ELECTRON_USER_DATA_DIR?.trim();
+    const logPath = logsDir
+      ? `${logsDir}/main.log`
+      : electronUserDataDir
+        ? `${electronUserDataDir}/logs/main.log`
+        : configDir
+          ? `${configDir}/electron/logs/main.log`
+          : undefined;
+    if (!logPath) return;
+
+    if (fs?.appendFileSync && fs?.mkdirSync && path?.dirname) {
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      fs.appendFileSync(logPath, formatted, 'utf8');
+      return;
+    }
+
+    const bunRuntime = (globalThis as { Bun?: { write?: (path: string, data: string, options?: { append?: boolean }) => Promise<unknown> } }).Bun;
+    if (bunRuntime?.write) {
+      void bunRuntime.write(logPath, formatted, { append: true });
+    }
+  } catch {
+    // Silent fallback: stderr output above is still preserved.
+  }
+}
+
 /**
  * Debug logging utility that auto-routes based on environment.
  * Only logs when debug mode is enabled via --debug flag.
@@ -147,6 +224,39 @@ function output(formatted: string): void {
 export function debug(message: string, ...args: unknown[]): void {
   if (!isDebugEnabled()) return;
   output(formatMessage(undefined, message, args));
+}
+
+function isContextWindowDebugEnabled(): boolean {
+  if (isCliJsonOnlyMode()) return false;
+  return typeof process !== 'undefined' && process.env?.CRAFT_DEBUG_CONTEXT_WINDOW === '1';
+}
+
+function isDeepSeekCacheDebugEnabled(): boolean {
+  if (isCliJsonOnlyMode()) return false;
+  return typeof process !== 'undefined' && process.env?.CRAFT_DEBUG_DEEPSEEK_CACHE === '1';
+}
+
+/**
+ * Emit contextWindow source diagnostics to the shared debug sink.
+ * Unlike `debug()`, this is controlled by a dedicated env flag so users can
+ * inspect context-window provenance without enabling broad debug logging.
+ */
+export function debugContextWindow(message: string, ...args: unknown[]): void {
+  if (!isContextWindowDebugEnabled()) return;
+  const formatted = formatMessage('context-window', message, args);
+  output(formatted);
+  appendToMainLog(formatted);
+}
+
+/**
+ * Emit DeepSeek prompt-cache diagnostics through a dedicated switch and tag.
+ * Used to trace provider usage fields from raw SDK events to UI token display.
+ */
+export function debugDeepSeekCache(message: string, ...args: unknown[]): void {
+  if (!isDeepSeekCacheDebugEnabled()) return;
+  const formatted = formatMessage('deepseek-cache', message, args);
+  output(formatted);
+  appendToMainLog(formatted);
 }
 
 /**

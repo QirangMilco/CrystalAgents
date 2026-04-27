@@ -897,9 +897,19 @@ export function handleUsageUpdate(
     totalTokens: session.tokenUsage?.totalTokens ?? 0,
     contextTokens: session.tokenUsage?.contextTokens ?? 0,
     costUsd: session.tokenUsage?.costUsd ?? 0,
-    ...(session.tokenUsage?.cacheReadTokens !== undefined && { cacheReadTokens: session.tokenUsage.cacheReadTokens }),
-    ...(session.tokenUsage?.cacheCreationTokens !== undefined && { cacheCreationTokens: session.tokenUsage.cacheCreationTokens }),
+    ...((event.tokenUsage.cacheReadTokens ?? session.tokenUsage?.cacheReadTokens) !== undefined && { cacheReadTokens: event.tokenUsage.cacheReadTokens ?? session.tokenUsage?.cacheReadTokens }),
+    ...((event.tokenUsage.cacheCreationTokens ?? session.tokenUsage?.cacheCreationTokens) !== undefined && { cacheCreationTokens: event.tokenUsage.cacheCreationTokens ?? session.tokenUsage?.cacheCreationTokens }),
+    ...((event.tokenUsage.cacheMissTokens ?? session.tokenUsage?.cacheMissTokens) !== undefined && { cacheMissTokens: event.tokenUsage.cacheMissTokens ?? session.tokenUsage?.cacheMissTokens }),
     ...(event.tokenUsage.contextWindow && { contextWindow: event.tokenUsage.contextWindow }),
+  }
+
+  if ((window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_DEEPSEEK_CACHE === '1') {
+    console.info('[deepseek-cache] renderer usage_update merged cache usage', {
+      sessionId: session.id,
+      incoming: event.tokenUsage,
+      previous: session.tokenUsage,
+      updated: updatedTokenUsage,
+    })
   }
 
   return {

@@ -327,6 +327,16 @@ function compactionSummaryIoEnabled(): boolean {
   return process.env.CRAFT_DEBUG_COMPACTION_SUMMARY_IO === '1';
 }
 
+function deepSeekCacheDebugEnabled(): boolean {
+  return process.env.CRAFT_DEBUG_DEEPSEEK_CACHE === '1';
+}
+
+function deepSeekCacheDebug(message: string, details?: Record<string, unknown>): void {
+  if (!deepSeekCacheDebugEnabled()) return;
+  const payload = details ? ` ${JSON.stringify(details)}` : '';
+  process.stderr.write(`[deepseek-cache] PiServer ${message}${payload}\n`);
+}
+
 function getElectronMainLogPath(): string {
   return getCraftMainLogPath();
 }
@@ -1774,8 +1784,106 @@ function extractToolExecutionMetadata(args: Record<string, unknown> | undefined)
   };
 }
 
+function normalizeDeepSeekUsage(event: AgentSessionEvent): AgentSessionEvent {
+  if (event.type !== 'message_end') return event;
+  const message = (event as any).message;
+  const usage = message?.usage;
+  if (!usage || typeof usage !== 'object') return event;
+
+  const cacheHit = usage.prompt_cache_hit_tokens ?? usage.promptCacheHitTokens;
+  const cacheMiss = usage.prompt_cache_miss_tokens ?? usage.promptCacheMissTokens;
+  const promptTokens = usage.prompt_tokens ?? usage.promptTokens;
+  const completionTokens = usage.completion_tokens ?? usage.completionTokens;
+
+  if (typeof cacheHit !== 'number' && typeof cacheMiss !== 'number') {
+    const mappedCacheRead = usage.cacheRead;
+    const mappedInput = usage.input;
+    const isDeepSeekMappedCache = (message?.provider === 'deepseek' || String(message?.model ?? '').includes('deepseek'))
+      && typeof mappedCacheRead === 'number'
+      && mappedCacheRead > 0
+      && typeof mappedInput === 'number';
+
+    if (!isDeepSeekMappedCache) {
+      deepSeekCacheDebug('raw usage has no DeepSeek cache fields', {
+        model: message?.model,
+        provider: message?.provider,
+        input: usage.input,
+        output: usage.output,
+        cacheRead: usage.cacheRead,
+        cacheWrite: usage.cacheWrite,
+        promptTokens,
+        completionTokens,
+      });
+      return event;
+    }
+
+    deepSeekCacheDebug('normalized mapped cache usage', {
+      model: message?.model,
+      provider: message?.provider,
+      mappedInput,
+      mappedOutput: usage.output,
+      mappedCacheRead,
+      mappedCacheWrite: usage.cacheWrite,
+      inferredCacheMiss: mappedInput,
+      inferredPromptTokens: mappedInput + mappedCacheRead,
+    });
+
+    return {
+      ...(event as Record<string, unknown>),
+      message: {
+        ...message,
+        usage: {
+          ...usage,
+          input: mappedInput,
+          cacheRead: mappedCacheRead,
+          cacheWrite: usage.cacheWrite ?? 0,
+          cacheMiss: mappedInput,
+          promptTokens: mappedInput + mappedCacheRead,
+        },
+      },
+    } as unknown as AgentSessionEvent;
+  }
+
+  const normalizedHit = typeof cacheHit === 'number' ? cacheHit : 0;
+  const normalizedMiss = typeof cacheMiss === 'number'
+    ? cacheMiss
+    : (typeof promptTokens === 'number' ? Math.max(0, promptTokens - normalizedHit) : 0);
+
+  deepSeekCacheDebug('normalized usage', {
+    model: message?.model,
+    provider: message?.provider,
+    rawPromptCacheHitTokens: cacheHit,
+    rawPromptCacheMissTokens: cacheMiss,
+    rawPromptTokens: promptTokens,
+    rawCompletionTokens: completionTokens,
+    normalizedInput: normalizedMiss,
+    normalizedOutput: typeof completionTokens === 'number' ? completionTokens : usage.output,
+    normalizedCacheRead: normalizedHit,
+    normalizedCacheMiss: normalizedMiss,
+    normalizedPromptTokens: typeof promptTokens === 'number' ? promptTokens : normalizedHit + normalizedMiss,
+  });
+
+  return {
+    ...(event as Record<string, unknown>),
+    message: {
+      ...message,
+      usage: {
+        ...usage,
+        // PiEventAdapter computes inputTokens as input + cacheRead.
+        // DeepSeek prompt_tokens already equals hit + miss, so set input to miss only.
+        input: normalizedMiss,
+        output: typeof completionTokens === 'number' ? completionTokens : usage.output,
+        cacheRead: normalizedHit,
+        cacheWrite: usage.cacheWrite ?? 0,
+        cacheMiss: normalizedMiss,
+        promptTokens: typeof promptTokens === 'number' ? promptTokens : normalizedHit + normalizedMiss,
+      },
+    },
+  } as unknown as AgentSessionEvent;
+}
+
 function handleSessionEvent(event: AgentSessionEvent): void {
-  let forwardedEvent: OutboundAgentEvent = event;
+  let forwardedEvent: OutboundAgentEvent = normalizeDeepSeekUsage(event) as OutboundAgentEvent;
 
   // Log API errors for debugging and attach provider-native turn anchor for branch cutoffs.
   if (event.type === 'message_end') {
@@ -1791,7 +1899,7 @@ function handleSessionEvent(event: AgentSessionEvent): void {
         // set branch cutoff points. The SDK's event shape doesn't declare this field,
         // so the cast is intentional.
         forwardedEvent = {
-          ...(event as Record<string, unknown>),
+          ...(forwardedEvent as Record<string, unknown>),
           sdkTurnAnchor,
         } as unknown as OutboundAgentEvent;
       }

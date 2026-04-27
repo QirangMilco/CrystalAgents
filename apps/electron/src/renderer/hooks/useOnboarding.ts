@@ -19,6 +19,7 @@ import type { ProviderChoice } from '@/components/onboarding/ProviderSelectStep'
 import type { LocalModelSubmitData } from '@/components/onboarding/LocalModelStep'
 import type { ApiKeySubmitData } from '@/components/apisetup'
 import type { CustomEndpointConfig } from '@config/llm-connections'
+import type { ModelDefinition } from '@config/models'
 import type { SetupNeeds, LlmConnectionSetup } from '../../shared/types'
 
 interface UseOnboardingOptions {
@@ -141,7 +142,8 @@ export function apiSetupMethodToConnectionSetup(
     baseUrl?: string
     connectionDefaultModel?: string
     miniModel?: string
-    models?: string[]
+    models?: Array<string | ModelDefinition>
+    contextWindow?: number
     piAuthProvider?: string
     modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
     customEndpoint?: CustomEndpointConfig
@@ -163,6 +165,7 @@ export function apiSetupMethodToConnectionSetup(
         defaultModel: options.connectionDefaultModel,
         miniModel: options.miniModel,
         models: options.models,
+        contextWindow: options.contextWindow,
         customEndpoint: options.customEndpoint,
       }
     case 'claude_oauth':
@@ -184,6 +187,7 @@ export function apiSetupMethodToConnectionSetup(
         defaultModel: options.connectionDefaultModel,
         miniModel: options.miniModel,
         models: options.models,
+        contextWindow: options.contextWindow,
         piAuthProvider: options.piAuthProvider,
         modelSelectionMode: options.modelSelectionMode,
         customEndpoint: options.customEndpoint,
@@ -249,7 +253,8 @@ export function useOnboarding({
       baseUrl?: string
       connectionDefaultModel?: string
       miniModel?: string
-      models?: string[]
+      models?: Array<string | ModelDefinition>
+      contextWindow?: number
       piAuthProvider?: string
       modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
       customEndpoint?: CustomEndpointConfig
@@ -276,6 +281,7 @@ export function useOnboarding({
         connectionDefaultModel: options?.connectionDefaultModel,
         miniModel: options?.miniModel,
         models: options?.models,
+        contextWindow: options?.contextWindow,
         piAuthProvider: options?.piAuthProvider,
         modelSelectionMode: options?.modelSelectionMode,
         customEndpoint: options?.customEndpoint,
@@ -395,6 +401,7 @@ export function useOnboarding({
           connectionDefaultModel: data.connectionDefaultModel,
           miniModel: data.miniModel,
           models: data.models,
+          contextWindow: data.contextWindow,
           piAuthProvider: data.piAuthProvider,
           modelSelectionMode: data.modelSelectionMode,
           iamCredentials: data.iamCredentials,
@@ -416,6 +423,7 @@ export function useOnboarding({
           connectionDefaultModel: data.connectionDefaultModel,
           miniModel: data.miniModel,
           models: data.models,
+          contextWindow: data.contextWindow,
           piAuthProvider: data.piAuthProvider,
           modelSelectionMode: data.modelSelectionMode,
           customEndpoint: data.customEndpoint,
@@ -459,7 +467,7 @@ export function useOnboarding({
         provider: setupTestProvider,
         apiKey: data.apiKey,
         baseUrl: data.baseUrl,
-        model: data.models?.[0],
+        model: typeof data.models?.[0] === 'string' ? data.models[0] : data.models?.[0]?.id,
         piAuthProvider: data.piAuthProvider,
         customEndpoint: data.customEndpoint,
       })
@@ -478,6 +486,7 @@ export function useOnboarding({
         connectionDefaultModel: data.connectionDefaultModel,
         miniModel: data.miniModel,
         models: data.models,
+        contextWindow: data.contextWindow,
         piAuthProvider: data.piAuthProvider,
         modelSelectionMode: data.modelSelectionMode,
         customEndpoint: data.customEndpoint,

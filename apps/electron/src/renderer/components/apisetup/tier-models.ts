@@ -19,9 +19,15 @@ export function pickTierDefaults(models: PiModelInfo[]): { best: string; default
   return { best, default_, cheap }
 }
 
-export function resolveTierModels(models: PiModelInfo[], savedModels?: string[]): { best: string; default_: string; cheap: string } {
+type SavedTierModel = string | { id: string }
+
+function getSavedModelId(model: SavedTierModel): string {
+  return typeof model === 'string' ? model : model.id
+}
+
+export function resolveTierModels(models: PiModelInfo[], savedModels?: SavedTierModel[]): { best: string; default_: string; cheap: string } {
   const defaults = pickTierDefaults(models)
-  const saved = (savedModels ?? []).filter(Boolean)
+  const saved = (savedModels ?? []).filter(Boolean).map(getSavedModelId)
   if (saved.length === 0) return defaults
 
   const valid = new Set(models.map(m => m.id))

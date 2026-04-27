@@ -83,6 +83,7 @@ export interface SessionTokenUsage {
   costUsd: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  cacheMissTokens?: number;
   /** Model's context window size in tokens (from SDK modelUsage) */
   contextWindow?: number;
 }

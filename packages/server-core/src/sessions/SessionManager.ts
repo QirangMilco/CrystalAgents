@@ -98,6 +98,7 @@ import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntr
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
 import { resizeImageForAPI, resizeIconBuffer } from '@craft-agent/server-core/services'
+import { debugContextWindow, debugDeepSeekCache } from '@craft-agent/shared/utils/debug'
 export { sanitizeForTitle }
 
 // Module-level platform ref — set once during init via setSessionPlatform()
@@ -6692,9 +6693,32 @@ export class SessionManager implements ISessionManager {
           // Cache tokens reflect current state, not accumulated
           managed.tokenUsage.cacheReadTokens = event.usage.cacheReadTokens ?? 0
           managed.tokenUsage.cacheCreationTokens = event.usage.cacheCreationTokens ?? 0
+          managed.tokenUsage.cacheMissTokens = event.usage.cacheMissTokens ?? managed.tokenUsage.cacheMissTokens
+          debugDeepSeekCache('SessionManager complete stored cache usage', {
+            sessionId: managed.id,
+            inputTokens: event.usage.inputTokens,
+            cacheReadTokens: event.usage.cacheReadTokens,
+            cacheMissTokens: event.usage.cacheMissTokens,
+            cacheCreationTokens: event.usage.cacheCreationTokens,
+            managedCacheReadTokens: managed.tokenUsage.cacheReadTokens,
+            managedCacheMissTokens: managed.tokenUsage.cacheMissTokens,
+            managedCacheCreationTokens: managed.tokenUsage.cacheCreationTokens,
+          })
           // Update context window (use latest value - may change if model switches)
           if (event.usage.contextWindow) {
             managed.tokenUsage.contextWindow = event.usage.contextWindow
+            debugContextWindow('SessionManager complete stored contextWindow', {
+              sessionId: managed.id,
+              source: 'complete.usage.contextWindow',
+              contextWindow: event.usage.contextWindow,
+              inputTokens: event.usage.inputTokens,
+            })
+          } else {
+            debugContextWindow('SessionManager complete missing contextWindow', {
+              sessionId: managed.id,
+              source: 'complete.usage.contextWindow',
+              inputTokens: event.usage.inputTokens,
+            })
           }
         }
         break
@@ -6712,10 +6736,41 @@ export class SessionManager implements ISessionManager {
               costUsd: 0,
             }
           }
-          // Update only inputTokens (current context size) - other fields accumulate on complete
+          // Update inputTokens (current context size) and cache details for real-time display.
           managed.tokenUsage.inputTokens = event.usage.inputTokens
+          if (event.usage.cacheReadTokens !== undefined) {
+            managed.tokenUsage.cacheReadTokens = event.usage.cacheReadTokens
+          }
+          if (event.usage.cacheCreationTokens !== undefined) {
+            managed.tokenUsage.cacheCreationTokens = event.usage.cacheCreationTokens
+          }
+          if (event.usage.cacheMissTokens !== undefined) {
+            managed.tokenUsage.cacheMissTokens = event.usage.cacheMissTokens
+          }
+          debugDeepSeekCache('SessionManager usage_update stored cache usage', {
+            sessionId: managed.id,
+            inputTokens: event.usage.inputTokens,
+            cacheReadTokens: event.usage.cacheReadTokens,
+            cacheMissTokens: event.usage.cacheMissTokens,
+            cacheCreationTokens: event.usage.cacheCreationTokens,
+            managedCacheReadTokens: managed.tokenUsage.cacheReadTokens,
+            managedCacheMissTokens: managed.tokenUsage.cacheMissTokens,
+            managedCacheCreationTokens: managed.tokenUsage.cacheCreationTokens,
+          })
           if (event.usage.contextWindow) {
             managed.tokenUsage.contextWindow = event.usage.contextWindow
+            debugContextWindow('SessionManager usage_update stored contextWindow', {
+              sessionId: managed.id,
+              source: 'usage_update.contextWindow',
+              contextWindow: event.usage.contextWindow,
+              inputTokens: event.usage.inputTokens,
+            })
+          } else {
+            debugContextWindow('SessionManager usage_update missing contextWindow', {
+              sessionId: managed.id,
+              source: 'usage_update.contextWindow',
+              inputTokens: event.usage.inputTokens,
+            })
           }
 
           // Send to renderer for immediate UI update
@@ -6725,6 +6780,9 @@ export class SessionManager implements ISessionManager {
             tokenUsage: {
               inputTokens: event.usage.inputTokens,
               contextWindow: event.usage.contextWindow,
+              cacheReadTokens: event.usage.cacheReadTokens,
+              cacheCreationTokens: event.usage.cacheCreationTokens,
+              cacheMissTokens: event.usage.cacheMissTokens,
             },
           }, workspaceId)
         }

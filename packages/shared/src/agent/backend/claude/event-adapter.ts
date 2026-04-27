@@ -17,6 +17,7 @@ import type { AgentEvent } from '@craft-agent/core/types';
 import type { AgentError } from '../../errors.ts';
 import { BaseEventAdapter } from '../base-event-adapter.ts';
 import { ToolIndex, extractToolStarts, extractToolResults, isParentTaskTool, type ContentBlock } from '../../tool-matching.ts';
+import { debugContextWindow } from '../../../utils/debug.ts';
 
 /**
  * Callbacks injected by ClaudeAgent for operations that depend on agent state.
@@ -258,10 +259,17 @@ export class ClaudeEventAdapter extends BaseEventAdapter {
         this.lastAssistantUsage.cache_read_input_tokens +
         this.lastAssistantUsage.cache_creation_input_tokens;
 
+      debugContextWindow('ClaudeEventAdapter usage_update', {
+        inputTokens: currentInputTokens,
+        contextWindow: this.cachedContextWindow,
+        source: this.cachedContextWindow != null ? 'cached-model-usage' : 'none',
+      });
       events.push({
         type: 'usage_update',
         usage: {
           inputTokens: currentInputTokens,
+          cacheReadTokens: this.lastAssistantUsage.cache_read_input_tokens,
+          cacheCreationTokens: this.lastAssistantUsage.cache_creation_input_tokens,
           contextWindow: this.cachedContextWindow,
         },
       });
@@ -473,6 +481,16 @@ export class ClaudeEventAdapter extends BaseEventAdapter {
 
     if (primaryModelUsage?.contextWindow) {
       this.cachedContextWindow = primaryModelUsage.contextWindow;
+      debugContextWindow('ClaudeEventAdapter cached runtime contextWindow', {
+        contextWindow: primaryModelUsage.contextWindow,
+        source: 'result.modelUsage',
+        modelUsageKeys: Object.keys(msg.modelUsage || {}),
+      });
+    } else {
+      debugContextWindow('ClaudeEventAdapter missing runtime contextWindow', {
+        source: 'result.modelUsage',
+        modelUsageKeys: Object.keys(msg.modelUsage || {}),
+      });
     }
 
     // Use lastAssistantUsage for per-message context display (not cumulative)
@@ -500,6 +518,12 @@ export class ClaudeEventAdapter extends BaseEventAdapter {
       costUsd: msg.total_cost_usd,
       contextWindow: primaryModelUsage?.contextWindow,
     };
+
+    debugContextWindow('ClaudeEventAdapter complete usage', {
+      inputTokens,
+      contextWindow: primaryModelUsage?.contextWindow,
+      source: primaryModelUsage?.contextWindow != null ? 'result.modelUsage' : 'none',
+    });
 
     if (msg.subtype === 'success') {
       events.push({ type: 'complete', usage });

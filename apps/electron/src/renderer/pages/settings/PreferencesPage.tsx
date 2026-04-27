@@ -30,12 +30,37 @@ export const meta: DetailsPageMeta = {
   slug: 'preferences',
 }
 
+interface ContextUsageDisplayPreferences {
+  showCurrent: boolean
+  showMax: boolean
+  showUsagePercent: boolean
+  showThreshold: boolean
+  showCacheHit: boolean
+  showCacheHitPercent: boolean
+  showCacheMiss: boolean
+  showCacheWrite: boolean
+  mode: 'compact' | 'detailed'
+}
+
 interface PreferencesFormState {
   name: string
   timezone: string
   city: string
   country: string
   notes: string
+  contextUsageDisplay: ContextUsageDisplayPreferences
+}
+
+const defaultContextUsageDisplay: ContextUsageDisplayPreferences = {
+  showCurrent: true,
+  showMax: true,
+  showUsagePercent: true,
+  showThreshold: true,
+  showCacheHit: true,
+  showCacheHitPercent: true,
+  showCacheMiss: false,
+  showCacheWrite: false,
+  mode: 'compact',
 }
 
 const emptyFormState: PreferencesFormState = {
@@ -44,6 +69,7 @@ const emptyFormState: PreferencesFormState = {
   city: '',
   country: '',
   notes: '',
+  contextUsageDisplay: defaultContextUsageDisplay,
 }
 
 // Parse JSON to form state
@@ -56,6 +82,10 @@ function parsePreferences(json: string): PreferencesFormState {
       city: prefs.location?.city || '',
       country: prefs.location?.country || '',
       notes: prefs.notes || '',
+      contextUsageDisplay: {
+        ...defaultContextUsageDisplay,
+        ...(prefs.contextUsageDisplay || {}),
+      },
     }
   } catch {
     return emptyFormState
@@ -77,6 +107,7 @@ function serializePreferences(state: PreferencesFormState): string {
   }
 
   if (state.notes) prefs.notes = state.notes
+  prefs.contextUsageDisplay = state.contextUsageDisplay
   prefs.updatedAt = Date.now()
 
   return JSON.stringify(prefs, null, 2)

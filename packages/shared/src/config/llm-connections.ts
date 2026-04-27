@@ -142,6 +142,9 @@ export interface LlmConnection {
   /** Override available models (for custom endpoints that don't support model listing) */
   models?: Array<ModelDefinition | string>;
 
+  /** Connection-level default context window for models without per-model metadata */
+  contextWindow?: number;
+
   /** Default model for this connection */
   defaultModel?: string;
 

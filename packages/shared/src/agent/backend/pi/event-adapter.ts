@@ -21,6 +21,7 @@ import { BaseEventAdapter } from '../base-event-adapter.ts';
 import { PI_TOOL_NAME_MAP } from './constants.ts';
 import { toolMetadataStore } from '../../../interceptor-common.ts';
 import { parseError } from '../../errors.ts';
+import { debugContextWindow, debugDeepSeekCache } from '../../../utils/debug.ts';
 
 /**
  * Combined event type the adapter can handle.
@@ -67,7 +68,7 @@ export class PiEventAdapter extends BaseEventAdapter {
   private miniModel: string | undefined;
 
   // Track last usage for emitting with complete event
-  private lastUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: { total: number } } | undefined;
+  private lastUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; cacheMiss?: number; promptTokens?: number; totalTokens: number; cost: { total: number } } | undefined;
 
   constructor() {
     super('pi-event');
@@ -78,6 +79,11 @@ export class PiEventAdapter extends BaseEventAdapter {
    */
   setContextWindow(cw: number): void {
     this.contextWindow = cw;
+    debugContextWindow('PiEventAdapter setContextWindow', {
+      turnId: this.currentTurnId,
+      contextWindow: cw,
+      source: 'adapter-cache',
+    });
   }
 
   /**
@@ -123,6 +129,22 @@ export class PiEventAdapter extends BaseEventAdapter {
       case 'agent_end':
         if (this.lastUsage) {
           const inputTokens = this.lastUsage.input + (this.lastUsage.cacheRead || 0);
+          debugContextWindow('PiEventAdapter complete usage', {
+            turnId: this.currentTurnId,
+            inputTokens,
+            contextWindow: this.contextWindow,
+            source: this.contextWindow != null ? 'adapter-cache' : 'none',
+          });
+          debugDeepSeekCache('PiEventAdapter complete usage', {
+            turnId: this.currentTurnId,
+            rawInput: this.lastUsage.input,
+            rawOutput: this.lastUsage.output,
+            cacheRead: this.lastUsage.cacheRead,
+            cacheWrite: this.lastUsage.cacheWrite,
+            cacheMiss: this.lastUsage.cacheMiss,
+            promptTokens: this.lastUsage.promptTokens,
+            emittedInputTokens: inputTokens,
+          });
           yield {
             type: 'complete',
             usage: {
@@ -130,6 +152,7 @@ export class PiEventAdapter extends BaseEventAdapter {
               outputTokens: this.lastUsage.output,
               cacheReadTokens: this.lastUsage.cacheRead,
               cacheCreationTokens: this.lastUsage.cacheWrite,
+              cacheMissTokens: this.lastUsage.cacheMiss,
               costUsd: this.lastUsage.cost.total,
               contextWindow: this.contextWindow,
             },
@@ -186,7 +209,7 @@ export class PiEventAdapter extends BaseEventAdapter {
       case 'message_end': {
         // Pi SDK emits message_end for ALL messages (user, assistant, toolResult).
         // Only process assistant messages — skip user prompts and tool results.
-        const msg = event.message as { role?: string; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: { total: number } } } | undefined;
+        const msg = event.message as { role?: string; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cacheMiss?: number; promptTokens?: number; totalTokens: number; cost: { total: number } } } | undefined;
         const sdkTurnAnchor = (event as { sdkTurnAnchor?: string }).sdkTurnAnchor;
         if (msg?.role !== 'assistant') break;
 
@@ -229,10 +252,29 @@ export class PiEventAdapter extends BaseEventAdapter {
         if (msg.usage && typeof msg.usage.input === 'number') {
           this.lastUsage = msg.usage;
           const inputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
+          debugContextWindow('PiEventAdapter usage_update', {
+            turnId: this.currentTurnId,
+            inputTokens,
+            contextWindow: this.contextWindow,
+            source: this.contextWindow != null ? 'adapter-cache' : 'none',
+          });
+          debugDeepSeekCache('PiEventAdapter usage_update', {
+            turnId: this.currentTurnId,
+            rawInput: msg.usage.input,
+            rawOutput: msg.usage.output,
+            cacheRead: msg.usage.cacheRead,
+            cacheWrite: msg.usage.cacheWrite,
+            cacheMiss: msg.usage.cacheMiss,
+            promptTokens: msg.usage.promptTokens,
+            emittedInputTokens: inputTokens,
+          });
           yield {
             type: 'usage_update',
             usage: {
               inputTokens,
+              cacheReadTokens: msg.usage.cacheRead,
+              cacheCreationTokens: msg.usage.cacheWrite,
+              cacheMissTokens: msg.usage.cacheMiss,
               contextWindow: this.contextWindow,
             },
           };

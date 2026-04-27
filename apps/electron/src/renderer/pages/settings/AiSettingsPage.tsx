@@ -753,8 +753,7 @@ export default function AiSettingsPage() {
 
     // Set initial values before opening overlay so ApiKeyInput mounts with them
     const modelIds = connection.models
-      ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
-      .filter(Boolean)
+      ?.filter(Boolean)
 
     const isCustomEndpointConnection = !!connection.customEndpoint && !!connection.baseUrl?.trim()
 
@@ -764,6 +763,7 @@ export default function AiSettingsPage() {
       connectionDefaultModel: modelStr,
       activePreset: isCustomEndpointConnection ? 'custom' : (connection.piAuthProvider || undefined),
       models: modelIds,
+      contextWindow: connection.contextWindow,
       customApi: connection.customEndpoint?.api,
       modelsUrl: connection.customEndpoint?.modelsUrl,
     })

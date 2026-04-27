@@ -466,6 +466,9 @@ export interface UsageUpdateEvent {
   tokenUsage: {
     inputTokens: number
     contextWindow?: number
+    cacheReadTokens?: number
+    cacheCreationTokens?: number
+    cacheMissTokens?: number
   }
 }
 

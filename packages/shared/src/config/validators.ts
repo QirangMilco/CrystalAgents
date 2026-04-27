@@ -89,6 +89,7 @@ const LlmConnectionSchema = z.object({
   authType: LlmAuthTypeSchema,
   baseUrl: z.string().optional(),
   models: z.array(z.union([z.string(), z.object({ id: z.string() }).passthrough()])).optional(),
+  contextWindow: z.number().int().positive().optional(),
   defaultModel: z.string().optional(),
   miniModel: z.string().optional(),
   modelSelectionMode: z.enum(['automaticallySyncedFromProvider', 'userDefined3Tier']).optional(),

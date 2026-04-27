@@ -216,6 +216,12 @@ export interface FreeFormInputProps {
     inputTokens?: number
     /** Model's context window size in tokens */
     contextWindow?: number
+    /** Prompt cache read tokens */
+    cacheReadTokens?: number
+    /** Prompt cache creation/write tokens */
+    cacheCreationTokens?: number
+    /** Prompt cache miss tokens, when provider reports it separately */
+    cacheMissTokens?: number
   }
   /** Follow-up annotations shown as context chips above the input */
   followUpItems?: FollowUpInputItem[]
@@ -383,6 +389,39 @@ export function FreeFormInput({
     // Return only non-empty groups
     return Object.entries(groups).filter(([, conns]) => conns.length > 0)
   }, [llmConnections])
+
+  const [contextUsageDisplay, setContextUsageDisplay] = React.useState({
+    showCurrent: true,
+    showMax: true,
+    showUsagePercent: true,
+    showThreshold: true,
+    showCacheHit: true,
+    showCacheHitPercent: true,
+    showCacheMiss: false,
+    showCacheWrite: false,
+    mode: 'compact' as 'compact' | 'detailed',
+  })
+
+  React.useEffect(() => {
+    let cancelled = false
+    window.electronAPI?.readPreferences?.().then(({ content }) => {
+      if (cancelled) return
+      try {
+        const prefs = JSON.parse(content || '{}')
+        const stored = prefs.contextUsageDisplay ?? {}
+        setContextUsageDisplay(prev => ({
+          ...prev,
+          ...stored,
+          showUsagePercent: stored.showUsagePercent ?? stored.showPercent ?? prev.showUsagePercent,
+          showCacheHit: stored.showCacheHit ?? stored.showCache ?? prev.showCacheHit,
+          showCacheHitPercent: stored.showCacheHitPercent ?? stored.showCache ?? prev.showCacheHitPercent,
+        }))
+      } catch {
+        // Ignore malformed preferences; settings page validation reports parse errors.
+      }
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   // Find current connection details for display
   const currentConnectionDetails = React.useMemo(() => {
@@ -1945,8 +1984,135 @@ export function FreeFormInput({
           </div>
           )}
 
-          {/* Spacer */}
-          <div className="flex-1" />
+          {/* Context usage summary - uses available left-side space without crowding model/send controls */}
+          {!compactMode && (() => {
+            const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
+            const compactionThreshold = effectiveContextWindow ? Math.round(effectiveContextWindow * 0.775) : null
+            const usedTokens = contextStatus?.inputTokens ?? 0
+            const cacheReadTokens = contextStatus?.cacheReadTokens ?? 0
+            const cacheCreationTokens = contextStatus?.cacheCreationTokens ?? 0
+            const cacheMissTokens = contextStatus?.cacheMissTokens
+            const cacheDenominator = cacheMissTokens !== undefined
+              ? cacheReadTokens + cacheMissTokens
+              : usedTokens
+            const cacheHitPercent = cacheReadTokens > 0 && cacheDenominator > 0
+              ? Math.round((cacheReadTokens / cacheDenominator) * 100)
+              : null
+            if (usedTokens <= 0) return <div className="flex-1" />
+            const usagePercent = effectiveContextWindow
+              ? Math.min(100, Math.round((usedTokens / effectiveContextWindow) * 100))
+              : null
+            const detailedMode = contextUsageDisplay.mode === 'detailed'
+            const unknownValue = '—'
+            const allItems = [
+              {
+                key: 'current',
+                visible: contextUsageDisplay.showCurrent,
+                compact: t('chat.contextCurrentShort', { value: usedTokens > 0 ? formatTokenCount(usedTokens) : unknownValue }),
+                detailed: t('chat.contextCurrentDetail', { value: usedTokens > 0 ? formatTokenCount(usedTokens) : unknownValue }),
+              },
+              {
+                key: 'max',
+                visible: contextUsageDisplay.showMax,
+                compact: t('chat.contextMaxShort', { value: effectiveContextWindow ? formatTokenCount(effectiveContextWindow) : unknownValue }),
+                detailed: t('chat.contextMaxDetail', { value: effectiveContextWindow ? formatTokenCount(effectiveContextWindow) : unknownValue }),
+              },
+              {
+                key: 'usagePercent',
+                visible: contextUsageDisplay.showUsagePercent,
+                compact: t('chat.contextUsagePercentShort', { percent: usagePercent ?? unknownValue }),
+                detailed: t('chat.contextUsagePercentDetail', { percent: usagePercent ?? unknownValue }),
+              },
+              {
+                key: 'threshold',
+                visible: contextUsageDisplay.showThreshold,
+                compact: t('chat.contextThresholdShort', { value: compactionThreshold ? formatTokenCount(compactionThreshold) : unknownValue }),
+                detailed: t('chat.contextThresholdDetail', { value: compactionThreshold ? formatTokenCount(compactionThreshold) : unknownValue }),
+              },
+              {
+                key: 'cacheHit',
+                visible: contextUsageDisplay.showCacheHit,
+                compact: t('chat.contextCacheHitShort', { value: cacheReadTokens > 0 ? formatTokenCount(cacheReadTokens) : unknownValue }),
+                detailed: t('chat.contextCacheHitDetail', { value: cacheReadTokens > 0 ? formatTokenCount(cacheReadTokens) : unknownValue }),
+              },
+              {
+                key: 'cacheHitPercent',
+                visible: contextUsageDisplay.showCacheHitPercent,
+                compact: t('chat.contextCacheHitPercentShort', { percent: cacheHitPercent ?? unknownValue }),
+                detailed: t('chat.contextCacheHitPercentDetail', { percent: cacheHitPercent ?? unknownValue }),
+              },
+              {
+                key: 'cacheMiss',
+                visible: contextUsageDisplay.showCacheMiss,
+                compact: t('chat.contextCacheMissShort', { value: cacheMissTokens !== undefined ? formatTokenCount(cacheMissTokens) : unknownValue }),
+                detailed: t('chat.contextCacheMissDetail', { value: cacheMissTokens !== undefined ? formatTokenCount(cacheMissTokens) : unknownValue }),
+              },
+              {
+                key: 'cacheWrite',
+                visible: contextUsageDisplay.showCacheWrite,
+                compact: t('chat.contextCacheWriteShort', { value: cacheCreationTokens > 0 ? formatTokenCount(cacheCreationTokens) : unknownValue }),
+                detailed: t('chat.contextCacheWriteDetail', { value: cacheCreationTokens > 0 ? formatTokenCount(cacheCreationTokens) : unknownValue }),
+              },
+            ]
+            const visibleItems = allItems.filter(item => item.visible)
+            const hiddenItems = allItems.filter(item => !item.visible)
+            const maxInlineItems = 8
+            if ((window as Window & { process?: { env?: Record<string, string | undefined> } }).process?.env?.CRAFT_DEBUG_DEEPSEEK_CACHE === '1') {
+              console.info('[deepseek-cache] FreeFormInput context cache display', {
+                usedTokens,
+                effectiveContextWindow,
+                usagePercent,
+                cacheReadTokens,
+                cacheMissTokens,
+                cacheCreationTokens,
+                cacheDenominator,
+                cacheHitPercent,
+                mode: contextUsageDisplay.mode,
+                visibleKeys: visibleItems.map(item => item.key),
+                hiddenKeys: hiddenItems.map(item => item.key),
+              })
+            }
+            const inlineItems = visibleItems.slice(0, maxInlineItems)
+            const overflowItems = visibleItems.slice(maxInlineItems)
+            const parts = inlineItems.map(item => detailedMode ? item.detailed : item.compact)
+            if (parts.length === 0 && allItems.length === 0) return <div className="flex-1" />
+
+            return (
+              <div className="flex-1 min-w-0 px-2 hidden sm:flex items-center justify-end">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="truncate text-[12px] text-muted-foreground select-none max-w-full">
+                      {contextStatus?.isCompacting && <Spinner className="inline h-3 w-3 mr-1 align-[-2px]" />}
+                      {parts.length > 0 ? parts.join(' · ') : t('chat.contextDetailsHidden')}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[320px]">
+                    <div className="space-y-1 text-xs">
+                      {inlineItems.map(item => (
+                        <div key={`inline-${item.key}`}>{item.detailed}</div>
+                      ))}
+                      {overflowItems.length > 0 && (
+                        <>
+                          <div className="pt-1 font-medium text-foreground">{t('chat.contextMoreDetails')}</div>
+                          {overflowItems.map(item => (
+                            <div key={`overflow-${item.key}`}>{item.detailed}</div>
+                          ))}
+                        </>
+                      )}
+                      {hiddenItems.length > 0 && (
+                        <>
+                          <div className="pt-1 font-medium text-foreground">{t('chat.contextHiddenDetails')}</div>
+                          {hiddenItems.map(item => (
+                            <div key={`hidden-${item.key}`}>{item.detailed}</div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )
+          })()}
 
           {/* Right side: Model + Send - never shrink so they're always visible */}
           <div className="flex items-center shrink-0">
@@ -2149,23 +2315,56 @@ export function FreeFormInput({
                 </>
               )}
 
-              {/* Context usage footer - only show when we have token data */}
-              {contextStatus?.inputTokens != null && contextStatus.inputTokens > 0 && (
-                <>
-                  <StyledDropdownMenuSeparator className="my-1" />
-                  <div className="px-2 py-1.5 select-none">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{t('chat.context')}</span>
-                      <span className="flex items-center gap-1.5">
-                        {contextStatus.isCompacting && (
-                          <Spinner className="h-3 w-3" />
-                        )}
-                        {t('chat.tokensUsed', { displayCount: formatTokenCount(contextStatus.inputTokens) })}
-                      </span>
+              {/* Context usage footer - show current usage plus effective limit/compaction threshold when available */}
+              {(() => {
+                const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
+                const compactionThreshold = effectiveContextWindow
+                  ? Math.round(effectiveContextWindow * 0.775)
+                  : null
+                const hasContextDetails = (contextStatus?.inputTokens != null && contextStatus.inputTokens > 0)
+                  || effectiveContextWindow != null
+                  || compactionThreshold != null
+
+                if (!hasContextDetails) return null
+
+                return (
+                  <>
+                    <StyledDropdownMenuSeparator className="my-1" />
+                    <div className="px-2 py-1.5 select-none space-y-1">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground gap-3">
+                        <span>{t('chat.context')}</span>
+                        <span className="flex items-center gap-1.5 text-right">
+                          {contextStatus?.isCompacting && (
+                            <Spinner className="h-3 w-3 shrink-0" />
+                          )}
+                          <span>
+                            {contextStatus?.inputTokens != null && contextStatus.inputTokens > 0
+                              ? (
+                                  effectiveContextWindow != null
+                                    ? t('chat.contextUsageWithLimit', {
+                                        used: formatTokenCount(contextStatus.inputTokens),
+                                        limit: formatTokenCount(effectiveContextWindow),
+                                      })
+                                    : t('chat.tokensUsed', { displayCount: formatTokenCount(contextStatus.inputTokens) })
+                                )
+                              : (effectiveContextWindow != null
+                                  ? t('chat.contextLimitOnly', { limit: formatTokenCount(effectiveContextWindow) })
+                                  : '—')}
+                          </span>
+                        </span>
+                      </div>
+                      {compactionThreshold != null && (
+                        <div className="flex items-center justify-between text-xs text-muted-foreground gap-3">
+                          <span>{t('chat.autoCompact')}</span>
+                          <span className="text-right">
+                            {t('chat.compactionThreshold', { threshold: formatTokenCount(compactionThreshold) })}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                )
+              })()}
             </StyledDropdownMenuContent>
           </DropdownMenu>
           )}
@@ -2212,10 +2411,31 @@ export function FreeFormInput({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
-                  {isProcessing
-                    ? `${usagePercent}% context used — wait for current operation`
-                    : `${usagePercent}% context used — click to compact`
-                  }
+                  {(() => {
+                    const contextWindowLabel = effectiveContextWindow
+                      ? formatTokenCount(effectiveContextWindow)
+                      : '—'
+                    const thresholdLabel = compactionThreshold
+                      ? formatTokenCount(compactionThreshold)
+                      : '—'
+                    const usedLabel = contextStatus?.inputTokens
+                      ? formatTokenCount(contextStatus.inputTokens)
+                      : '—'
+
+                    return isProcessing
+                      ? t('chat.contextCompactionTooltipBusy', {
+                          percent: usagePercent,
+                          used: usedLabel,
+                          limit: contextWindowLabel,
+                          threshold: thresholdLabel,
+                        })
+                      : t('chat.contextCompactionTooltipReady', {
+                          percent: usagePercent,
+                          used: usedLabel,
+                          limit: contextWindowLabel,
+                          threshold: thresholdLabel,
+                        })
+                  })()}
                 </TooltipContent>
               </Tooltip>
             )
