@@ -1436,8 +1436,8 @@ export interface ResponseCardProps {
   onOpenUrl?: (url: string) => void
   /** Callback to open response in Monaco editor */
   onPopOut?: () => void
-  /** Card variant - 'response' for AI messages, 'plan' for plan messages */
-  variant?: 'response' | 'plan'
+  /** Card variant - 'response' for AI messages, 'plan' for plan messages, 'summary' for transferred context */
+  variant?: 'response' | 'plan' | 'summary'
   /** Parent session ID (used to reset local annotation/island UI state on session switches) */
   sessionId?: string
   /** Underlying message ID for annotation actions */
@@ -2464,10 +2464,16 @@ export function ResponseCard({
   // Completed response or plan - show with max height and footer
   if (isCompleted || variant === 'plan') {
     const isPlan = variant === 'plan'
+    const isSummary = variant === 'summary'
 
     return (
       <>
-        <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden relative group">
+        <div className={cn(
+          "shadow-minimal rounded-[8px] overflow-hidden relative group",
+          isSummary
+            ? "bg-info/5 border border-info/15"
+            : "bg-background"
+        )}>
           {/* Fullscreen button - desktop only; compact mode keeps message chrome minimal */}
           {!compactMode && (
           <button
@@ -2495,6 +2501,19 @@ export function ResponseCard({
             >
               <ListTodo className={cn(SIZE_CONFIG.iconSize, "text-success")} />
               <span className="font-medium text-success">Plan</span>
+            </div>
+          )}
+
+          {/* Summary header - shown for transferred context summary */}
+          {isSummary && (
+            <div
+              className={cn(
+                "px-4 py-2 border-b border-info/15 flex items-center gap-2 bg-info/10 select-none",
+                SIZE_CONFIG.fontSize
+              )}
+            >
+              <FileText className={cn(SIZE_CONFIG.iconSize, "text-info")} />
+              <span className="font-medium text-info">{t('sessionSummaryBubble.title')}</span>
             </div>
           )}
 
@@ -2529,7 +2548,8 @@ export function ResponseCard({
           {/* Footer with actions - hidden in compact mode */}
           {!compactMode && (
             <div className={cn(
-              "pl-4 pr-2.5 py-2 border-t border-border/30 flex items-center justify-between bg-muted/20",
+              "pl-4 pr-2.5 py-2 border-t flex items-center justify-between",
+              isSummary ? "border-info/15 bg-info/5" : "border-border/30 bg-muted/20",
               SIZE_CONFIG.fontSize
             )}>
               {/* Left side - Copy, View as Markdown, Annotation hint */}

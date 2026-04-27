@@ -7093,7 +7093,7 @@ export class SessionManager implements ISessionManager {
     this.persistSession(managed)
     await sessionPersistenceQueue.flush(session.id)
 
-    return { sessionId: session.id }
+    return { sessionId: session.id, summary: managed.transferredSessionSummary }
   }
 
   async cloneSession(sessionId: string, workspaceId: string, actionId?: string): Promise<CloneSessionResult> {
@@ -7213,7 +7213,8 @@ export class SessionManager implements ISessionManager {
         throw new Error(`Failed to summarize session ${sessionId}`)
       }
 
-      return this.importRemoteSessionTransfer(workspaceId, payload, signal)
+      const result = await this.importRemoteSessionTransfer(workspaceId, payload, signal)
+      return { sessionId: result.sessionId, summary: payload.summary.trim() }
     } finally {
       this.unregisterSessionAction(actionId)
     }

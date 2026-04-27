@@ -45,6 +45,7 @@ import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
 import {
   TurnCard,
+  ResponseCard,
   UserMessageBubble,
   groupMessagesByTurn,
   formatTurnAsMarkdown,
@@ -1539,8 +1540,21 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Memoize turn grouping - avoids O(n) iteration on every render/keystroke
   const allTurns = React.useMemo(() => {
     if (!session) return []
-    return groupMessagesByTurn(session.messages)
-  }, [session?.messages])
+
+    const summary = session.transferredSessionSummary?.trim()
+    if (!summary) return groupMessagesByTurn(session.messages)
+
+    const summaryMessage: Message = {
+      id: `${session.id}:transferred-summary`,
+      role: 'info',
+      content: summary,
+      timestamp: (session.createdAt ?? session.messages[0]?.timestamp ?? Date.now()) - 1,
+      statusType: 'session_transfer_summary',
+      infoLevel: 'info',
+    }
+
+    return groupMessagesByTurn([summaryMessage, ...session.messages])
+  }, [session])
 
   const autoExpandedAssistantTurnIds = useMemo(() => allTurns
     .map((turn, index) => {
@@ -1849,6 +1863,41 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             sessionId={session?.id}
                             compactMode={compactMode}
                           />
+                        </div>
+                      )
+                    }
+
+                    // Transferred summary is a system-level bubble that can collapse like long responses.
+                    if (turn.type === 'system' && turn.message.role === 'info' && turn.message.statusType === 'session_transfer_summary') {
+                      return (
+                        <div
+                          key={turnKey}
+                          ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                          className={cn(
+                            "rounded-lg transition-all duration-200",
+                            isCurrentMatch && "ring-2 ring-info ring-offset-2 ring-offset-background",
+                            isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
+                          )}
+                        >
+                          <ResponseCard
+                            text={turn.message.content}
+                            isStreaming={false}
+                            onOpenFile={onOpenFile}
+                            onOpenUrl={onOpenUrl}
+                            onPopOut={() => {
+                              setOverlayState({
+                                type: 'markdown',
+                                content: turn.message.content,
+                                title: t('sessionSummaryBubble.title'),
+                                forceCodeView: true,
+                              })
+                            }}
+                            variant="summary"
+                            compactMode={compactMode}
+                          />
+                          <p className="mt-1 px-3 text-[11px] text-muted-foreground">
+                            {t(session?.transferredSessionSummaryApplied ? 'sessionSummaryBubble.appliedDescription' : 'sessionSummaryBubble.pendingDescription')}
+                          </p>
                         </div>
                       )
                     }

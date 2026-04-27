@@ -29,8 +29,11 @@ export function buildConversationSummaryPrompt(messages: RecoveryMessage[]): str
   if (!transcript) return null;
 
   return (
-    'Summarize this conversation concisely. Preserve: key decisions, ongoing tasks, ' +
-    `technical context, and the user's current goal. Be specific, not generic.\n\n${transcript}`
+    'Summarize this conversation so a new agent can continue seamlessly without seeing the original messages. ' +
+    'Be concise but sufficiently complete. Preserve concrete facts only: the user\'s current goal, relevant project/files/commands, key decisions, ' +
+    'completed work, open tasks, constraints/preferences, unresolved errors or blockers, and the exact next best step. ' +
+    'Omit greetings, repetition, and low-value transcript detail. Do not invent missing context. ' +
+    `Write the summary in the same language the user primarily used.\n\n${transcript}`
   );
 }
 

@@ -103,6 +103,10 @@ export interface Session {
   isArchived?: boolean
   archivedAt?: number
   supportsBranching?: boolean
+  /** Summary used to seed a session created from another session/workspace. */
+  transferredSessionSummary?: string
+  /** Whether the transferred-session summary has already been injected into the next model turn. */
+  transferredSessionSummaryApplied?: boolean
 }
 
 export interface CreateSessionOptions {
@@ -145,6 +149,7 @@ export interface CloneSessionResult {
 
 export interface CreateSessionFromSummaryResult {
   sessionId: string
+  summary: string
 }
 
 export interface RemoteSessionTransferPayload {
@@ -158,6 +163,7 @@ export interface RemoteSessionTransferPayload {
 
 export interface ImportRemoteSessionTransferResult {
   sessionId: string
+  summary?: string
 }
 
 export interface PermissionModeState {

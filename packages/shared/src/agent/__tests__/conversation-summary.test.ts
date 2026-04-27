@@ -27,7 +27,10 @@ describe('conversation-summary helpers', () => {
       { type: 'assistant', content: 'Working through the remaining edge cases.' },
     ])
 
-    expect(prompt).toContain('Summarize this conversation concisely. Preserve: key decisions, ongoing tasks, technical context, and the user\'s current goal. Be specific, not generic.')
+    expect(prompt).toContain('Summarize this conversation so a new agent can continue seamlessly without seeing the original messages.')
+    expect(prompt).toContain('Be concise but sufficiently complete.')
+    expect(prompt).toContain('the exact next best step')
+    expect(prompt).toContain('Write the summary in the same language the user primarily used.')
     expect(prompt).toContain('User: Need to ship the mobile fix.')
     expect(prompt).toContain('Assistant: Working through the remaining edge cases.')
   })
