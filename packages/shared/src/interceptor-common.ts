@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { CONFIG_DIR } from './config/paths.ts';
+import { getCraftMainLogPath } from './config/log-paths.ts';
 
 // ============================================================================
 // CONSTANTS
@@ -25,6 +26,9 @@ export const INTERCEPTOR_LOGGING_ENABLED = !IS_PACKAGED;
 
 export const DEBUG = INTERCEPTOR_LOGGING_ENABLED &&
   (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1');
+
+export const PROVIDER_RAW_RESPONSE_DEBUG =
+  process.env.CRAFT_DEBUG_PROVIDER_RAW_RESPONSE === '1';
 
 /** Config file path for reading settings in the SDK subprocess */
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -62,10 +66,9 @@ try {
   // Ignore — rotation is best-effort
 }
 
-export function debugLog(...args: unknown[]) {
-  if (!DEBUG) return;
+function formatLogMessage(scope: string, args: unknown[]): string {
   const timestamp = new Date().toISOString();
-  const message = `${timestamp} [interceptor] ${args.map((a) => {
+  return `${timestamp} [${scope}] ${args.map((a) => {
     if (typeof a === 'object') {
       try {
         return JSON.stringify(a);
@@ -76,11 +79,34 @@ export function debugLog(...args: unknown[]) {
     }
     return String(a);
   }).join(' ')}`;
+}
+
+function appendLogLine(message: string, alsoMainLog = false): void {
   try {
     appendFileSync(LOG_FILE, message + '\n');
   } catch {
     // Silently fail if can't write to log file
   }
+  if (!alsoMainLog) return;
+  try {
+    const mainLogPath = getCraftMainLogPath();
+    mkdirSync(dirname(mainLogPath), { recursive: true });
+    appendFileSync(mainLogPath, message + '\n');
+  } catch {
+    // Silent fallback: interceptor.log above may still be preserved.
+  }
+}
+
+export function debugLog(...args: unknown[]) {
+  if (!DEBUG) return;
+  const message = formatLogMessage('interceptor', args);
+  appendLogLine(message);
+}
+
+export function debugProviderRawResponse(...args: unknown[]) {
+  if (!PROVIDER_RAW_RESPONSE_DEBUG) return;
+  const message = formatLogMessage('provider-raw-response', args);
+  appendLogLine(message, true);
 }
 
 // ============================================================================

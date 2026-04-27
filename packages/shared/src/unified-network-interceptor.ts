@@ -22,6 +22,7 @@
 import {
   DEBUG,
   debugLog,
+  debugProviderRawResponse,
   isRichToolDescriptionsEnabled,
   isExtendedPromptCacheEnabled,
   is1MContextEnabled,
@@ -441,6 +442,12 @@ export function createAnthropicSseStrippingStream(): TransformStream<Uint8Array,
 
   function processEvent(eventType: string, dataStr: string, controller: TransformStreamDefaultController<Uint8Array>): void {
     eventCount++;
+    debugProviderRawResponse('SSE event', {
+      adapter: 'anthropic',
+      eventType,
+      eventCount,
+      data: dataStr,
+    });
     let data: Record<string, unknown>;
     try {
       data = JSON.parse(dataStr);
@@ -839,6 +846,10 @@ export function createOpenAiSseStrippingStream(): TransformStream<Uint8Array, Ui
   }
 
   function processDataLine(dataStr: string, controller: TransformStreamDefaultController<Uint8Array>): void {
+    debugProviderRawResponse('SSE event', {
+      adapter: 'openai-chat-completions',
+      data: dataStr,
+    });
     if (dataStr === '[DONE]') {
       flushTrackedCalls(controller);
       emitSseLine(dataStr, controller);
@@ -1128,6 +1139,10 @@ export function createOpenAiResponsesSseStrippingStream(): TransformStream<Uint8
   }
 
   function processDataLine(dataStr: string, controller: TransformStreamDefaultController<Uint8Array>): void {
+    debugProviderRawResponse('SSE event', {
+      adapter: 'openai-responses',
+      data: dataStr,
+    });
     if (dataStr === '[DONE]') {
       emitSseLine(dataStr, controller);
       return;
@@ -1470,6 +1485,20 @@ function toCurl(url: string, init?: RequestInit): string {
 /**
  * Log response and capture API errors.
  */
+function logProviderRawBody(url: string, response: Response, body: string, adapter?: ApiAdapter): void {
+  const maxLogSize = 20000;
+  const truncated = body.length > maxLogSize;
+  debugProviderRawResponse('HTTP response body', {
+    url,
+    status: response.status,
+    statusText: response.statusText,
+    contentType: response.headers.get('content-type') ?? '',
+    adapter: adapter?.name,
+    truncated,
+    body: truncated ? body.substring(0, maxLogSize) : body,
+  });
+}
+
 async function logResponse(response: Response, url: string, startTime: number, adapter?: ApiAdapter): Promise<Response> {
   const duration = Date.now() - startTime;
 
@@ -1492,6 +1521,13 @@ async function logResponse(response: Response, url: string, startTime: number, a
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.includes('text/event-stream')) {
     debugLog('  Body: [SSE stream - not logged]');
+    debugProviderRawResponse('HTTP response stream opened', {
+      url,
+      status: response.status,
+      statusText: response.statusText,
+      contentType,
+      adapter: adapter?.name,
+    });
     return response;
   }
 
@@ -1499,6 +1535,7 @@ async function logResponse(response: Response, url: string, startTime: number, a
   try {
     const text = await clone.text();
     const maxLogSize = 5000;
+    logProviderRawBody(url, response, text, adapter);
     if (text.length > maxLogSize) {
       debugLog(`  Body (truncated to ${maxLogSize} chars):\n${text.substring(0, maxLogSize)}...`);
     } else {
