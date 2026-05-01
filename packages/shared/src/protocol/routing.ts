@@ -269,6 +269,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
 
   // file — workspace files (not openDialog which is native)
   RPC_CHANNELS.file.READ,
+  RPC_CHANNELS.file.WRITE_TEXT,
   RPC_CHANNELS.file.READ_DATA_URL,
   RPC_CHANNELS.file.READ_PREVIEW_DATA_URL,
   RPC_CHANNELS.file.READ_BINARY,
@@ -406,6 +407,20 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
 
   // git — workspace filesystem
   RPC_CHANNELS.git.GET_BRANCH,
+  RPC_CHANNELS.git.GET_STATUS,
+  RPC_CHANNELS.git.GET_FILE_DIFF,
+  RPC_CHANNELS.git.STAGE_FILE,
+  RPC_CHANNELS.git.UNSTAGE_FILE,
+  RPC_CHANNELS.git.DISCARD_FILE,
+  RPC_CHANNELS.git.STAGE_ALL,
+  RPC_CHANNELS.git.UNSTAGE_ALL,
+  RPC_CHANNELS.git.DISCARD_ALL,
+  RPC_CHANNELS.git.COMMIT,
+  RPC_CHANNELS.git.PUSH,
+  RPC_CHANNELS.git.PULL,
+  RPC_CHANNELS.git.GET_RECENT_COMMITS,
+  RPC_CHANNELS.git.GET_COMMIT_DIFF,
+  RPC_CHANNELS.git.GENERATE_COMMIT_MESSAGE,
 
   // resources — workspace resource export/import
   RPC_CHANNELS.resources.EXPORT,

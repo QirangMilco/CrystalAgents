@@ -11,6 +11,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { setupI18n, i18n } from '@craft-agent/shared/i18n'
 import { initReactI18next } from 'react-i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
+import '@vscode/codicons/dist/codicon.css'
 import './index.css'
 
 function emitRendererCrashLog(label: string, payload: Record<string, unknown>): void {

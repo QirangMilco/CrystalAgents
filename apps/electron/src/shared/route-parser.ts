@@ -35,7 +35,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'settings'
+export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'settings' | 'changes'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -61,7 +61,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings'
+  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings', 'changes'
 ]
 
 /**
@@ -93,6 +93,23 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
   if (segments.length === 0) return null
 
   const first = segments[0]
+
+  // Changes navigator
+  if (first === 'changes') {
+    if (segments[1] === 'history') {
+      return {
+        navigator: 'changes',
+        details: { type: 'history', id: segments[2] || 'history' },
+      }
+    }
+    if (segments[1] === 'file' && segments[2]) {
+      return {
+        navigator: 'changes',
+        details: { type: 'file', id: decodeURIComponent(segments.slice(2).join('/')) },
+      }
+    }
+    return { navigator: 'changes', details: null }
+  }
 
   // Settings navigator
   if (first === 'settings') {
@@ -260,6 +277,15 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     return `settings/${detailsType}`
   }
 
+  if (parsed.navigator === 'changes') {
+    if (parsed.details?.type === 'history') {
+      return parsed.details.id && parsed.details.id !== 'history'
+        ? `changes/history/${encodeURIComponent(parsed.details.id)}`
+        : 'changes/history'
+    }
+    return parsed.details?.id ? `changes/file/${encodeURIComponent(parsed.details.id)}` : 'changes'
+  }
+
   if (parsed.navigator === 'sources') {
     // Build base from filter (sources, sources/api, sources/mcp, sources/local)
     let base = 'sources'
@@ -384,6 +410,15 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: subpage, params: {} }
   }
 
+  // Changes
+  if (compound.navigator === 'changes') {
+    return {
+      type: 'view',
+      name: 'changes',
+      params: compound.details?.id ? { filePath: compound.details.id } : {},
+    }
+  }
+
   // Sources
   if (compound.navigator === 'sources') {
     if (!compound.details) {
@@ -498,6 +533,14 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     return { navigator: 'settings', subpage }
   }
 
+  // Changes
+  if (compound.navigator === 'changes') {
+    return {
+      navigator: 'changes',
+      details: compound.details?.id ? { type: 'file', path: compound.details.id } : null,
+    }
+  }
+
   // Sources - include filter if present
   if (compound.navigator === 'sources') {
     if (!compound.details) {
@@ -579,6 +622,11 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return { navigator: 'settings', subpage: 'shortcuts' }
     case 'preferences':
       return { navigator: 'settings', subpage: 'preferences' }
+    case 'changes':
+      return {
+        navigator: 'changes',
+        details: parsed.params.filePath ? { type: 'file', path: parsed.params.filePath } : null,
+      }
     case 'sources':
       return { navigator: 'sources', details: null }
     case 'source-info':
@@ -697,6 +745,17 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
     return {
       navigator: 'settings',
       details: { type: state.subpage, id: state.subpage },
+    }
+  }
+
+  if (state.navigator === 'changes') {
+    return {
+      navigator: 'changes',
+      details: state.details
+        ? state.details.type === 'history'
+          ? { type: 'history', id: state.details.commitHash || 'history' }
+          : { type: 'file', id: state.details.path }
+        : null,
     }
   }
 

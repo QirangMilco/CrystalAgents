@@ -49,3 +49,9 @@ export const PATH_SEP = isWindows ? '\\' : '/'
 export function getPathBasename(path: string): string {
   return path.split(PATH_SEP).pop() || ''
 }
+
+export function joinPlatformPath(basePath: string, relativePath: string): string {
+  const normalizedBase = basePath.replace(/[\\/]+$/g, '')
+  const normalizedRelative = relativePath.replace(/[\\/]+/g, PATH_SEP).replace(new RegExp(`^\\${PATH_SEP}+`), '')
+  return `${normalizedBase}${PATH_SEP}${normalizedRelative}`
+}

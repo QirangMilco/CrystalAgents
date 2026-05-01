@@ -171,6 +171,17 @@ function getPresetForUrl(url: string, presets: Preset[]): PresetKey {
   return match?.key ?? 'custom'
 }
 
+function createCustomModelDefinition(id: string, contextWindow: number): ModelDefinition {
+  return {
+    id,
+    name: id,
+    shortName: id,
+    description: '',
+    provider: 'pi',
+    contextWindow,
+  }
+}
+
 function parseModelList(value: string): SubmitModel[] {
   return value
     .split(',')
@@ -179,10 +190,7 @@ function parseModelList(value: string): SubmitModel[] {
     .map((entry) => {
       const match = entry.match(/^(.+?)\s*@\s*(\d+)$/)
       if (!match?.[1] || !match?.[2]) return entry
-      return {
-        id: match[1].trim(),
-        contextWindow: Number(match[2]),
-      } satisfies ModelDefinition
+      return createCustomModelDefinition(match[1].trim(), Number(match[2]))
     })
 }
 
@@ -201,7 +209,7 @@ function rowToSubmitModel(row: CustomModelRow): SubmitModel | null {
   if (!id) return null
   const contextWindow = Number(row.contextWindow.trim())
   if (Number.isFinite(contextWindow) && contextWindow > 0) {
-    return { id, contextWindow: Math.round(contextWindow) }
+    return createCustomModelDefinition(id, Math.round(contextWindow))
   }
   return id
 }

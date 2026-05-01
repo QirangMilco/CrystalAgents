@@ -497,6 +497,84 @@ export interface Plan {
 // System types
 // ---------------------------------------------------------------------------
 
+export interface RepoStatusSummary {
+  branch: string
+  ahead: number
+  behind: number
+  modified: number
+  staged: number
+  untracked: number
+  conflicts: number
+}
+
+export interface ChangedFileItem {
+  path: string
+  oldPath?: string
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
+  staged: boolean
+  unstaged: boolean
+  additions: number
+  deletions: number
+  rawStatus?: string
+}
+
+export type GitOperationFailureReason = 'not_repo' | 'git_unavailable' | 'unknown_error'
+
+export type GitStatusResult =
+  | { ok: true; summary: RepoStatusSummary; files: ChangedFileItem[] }
+  | { ok: false; reason: GitOperationFailureReason; message?: string }
+
+export type GitFileDiffResult =
+  | { ok: true; diff: string }
+  | { ok: false; reason: GitOperationFailureReason; message?: string }
+
+export type GitActionResult =
+  | { ok: true; message?: string }
+  | { ok: false; reason: GitOperationFailureReason; message?: string }
+
+export interface GitCommitParams {
+  message: string
+}
+
+export interface GenerateGitCommitMessageParams {
+  workspaceId: string
+  dirPath: string
+  connectionSlug?: string
+  customPrompt?: string
+}
+
+export interface GitRecentCommitItem {
+  hash: string
+  shortHash: string
+  subject: string
+  authorName: string
+  authoredAt: string
+  refNames: string[]
+  parentHashes: string[]
+  isMergeCommit: boolean
+}
+
+export interface GitRecentCommitsResult {
+  ok: true
+  commits: GitRecentCommitItem[]
+}
+
+export interface GitGeneratedCommitMessageResult {
+  ok: true
+  message: string
+  connectionSlug: string
+}
+
+export interface GitCommitDetailResult {
+  ok: true
+  commit: GitRecentCommitItem
+  diff: string
+}
+
+export interface GitFileTarget {
+  filePath: string
+}
+
 export interface GitBashStatus {
   found: boolean
   path: string | null

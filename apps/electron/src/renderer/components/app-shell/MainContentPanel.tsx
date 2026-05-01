@@ -21,7 +21,7 @@ import { useAtomValue } from 'jotai'
 import { useTranslation } from 'react-i18next'
 import { Panel } from './Panel'
 import { MultiSelectPanel } from './MultiSelectPanel'
-import { useAppShellContext } from '@/context/AppShellContext'
+import { useActiveWorkspace, useAppShellContext } from '@/context/AppShellContext'
 import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
 import { StoplightProvider } from '@/context/StoplightContext'
 import {
@@ -31,6 +31,7 @@ import {
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
+  isChangesNavigation,
 } from '@/contexts/NavigationContext'
 import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelectionCount } from '@/hooks/useSession'
 import { sourceSelection, skillSelection, automationSelection } from '@/hooks/useEntitySelection'
@@ -43,6 +44,8 @@ import { AutomationInfoPage } from '../automations/AutomationInfoPage'
 import type { ExecutionEntry } from '../automations/types'
 import { automationsAtom } from '@/atoms/automations'
 import { SendResourceToWorkspaceDialog, type SendResourceType } from './SendResourceToWorkspaceDialog'
+import { ChangesDetailPanel } from './ChangesDetailPanel'
+import { ChangesHistoryPanel } from './ChangesHistoryPanel'
 
 export interface MainContentPanelProps {
   /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
@@ -82,6 +85,8 @@ export function MainContentPanel({
     getAutomationHistory,
     activeSessionWorkingDirectory,
   } = useAppShellContext()
+
+  const activeWorkspace = useActiveWorkspace()
 
   // Session multi-select state
   const isMultiSelectActive = useIsMultiSelectActive()
@@ -348,6 +353,17 @@ export function MainContentPanel({
           <p className="text-sm">{t("automations.noAutomationsConfigured")}</p>
         </div>
       </Panel>
+    )
+  }
+
+  if (isChangesNavigation(navState)) {
+    return wrapWithStoplight(
+      navState.details?.type === 'history'
+        ? <ChangesHistoryPanel workspaceRootPath={activeWorkspace?.rootPath} selectedCommitHash={navState.details.commitHash} />
+        : <ChangesDetailPanel
+            workspaceRootPath={activeWorkspace?.rootPath}
+            filePath={navState.details?.type === 'file' ? navState.details.path : null}
+          />
     )
   }
 

@@ -177,6 +177,12 @@ export const routes = {
     automationsAgentic: (automationId?: string) =>
       automationId ? `automations/agentic/automation/${automationId}` as const : 'automations/agentic' as const,
 
+    /** Changes view (workspace Git changes navigator) */
+    changes: (filePath?: string) => filePath ? `changes/file/${encodeURIComponent(filePath)}` as const : 'changes' as const,
+
+    /** Changes history view (recent commits) */
+    changesHistory: (commitHash?: string) => commitHash ? `changes/history/${encodeURIComponent(commitHash)}` as const : 'changes/history' as const,
+
     /** Settings view (settings navigator) - uses SettingsSubpage from registry */
     settings: (subpage?: SettingsSubpage) =>
       subpage

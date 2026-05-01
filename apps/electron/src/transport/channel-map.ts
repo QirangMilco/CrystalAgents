@@ -73,6 +73,7 @@ export const CHANNEL_MAP = {
 
   // File operations
   readFile: invoke(RPC_CHANNELS.file.READ),
+  writeFileText: invoke(RPC_CHANNELS.file.WRITE_TEXT),
   readFileDataUrl: invoke(RPC_CHANNELS.file.READ_DATA_URL),
   readFilePreviewDataUrl: invoke(RPC_CHANNELS.file.READ_PREVIEW_DATA_URL),
   readFileBinary: invoke(RPC_CHANNELS.file.READ_BINARY),
@@ -326,6 +327,21 @@ export const CHANNEL_MAP = {
 
   // Git
   getGitBranch: invoke(RPC_CHANNELS.git.GET_BRANCH),
+  getGitStatus: invoke(RPC_CHANNELS.git.GET_STATUS),
+  getGitFileDiff: invoke(RPC_CHANNELS.git.GET_FILE_DIFF),
+  stageGitFile: invoke(RPC_CHANNELS.git.STAGE_FILE),
+  unstageGitFile: invoke(RPC_CHANNELS.git.UNSTAGE_FILE),
+  discardGitFile: invoke(RPC_CHANNELS.git.DISCARD_FILE),
+  stageAllGitFiles: invoke(RPC_CHANNELS.git.STAGE_ALL),
+  unstageAllGitFiles: invoke(RPC_CHANNELS.git.UNSTAGE_ALL),
+  discardAllGitFiles: invoke(RPC_CHANNELS.git.DISCARD_ALL),
+  commitGitChanges: invoke(RPC_CHANNELS.git.COMMIT),
+  fetchGitChanges: invoke(RPC_CHANNELS.git.FETCH),
+  pushGitChanges: invoke(RPC_CHANNELS.git.PUSH),
+  pullGitChanges: invoke(RPC_CHANNELS.git.PULL),
+  getGitRecentCommits: invoke(RPC_CHANNELS.git.GET_RECENT_COMMITS),
+  getGitCommitDiff: invoke(RPC_CHANNELS.git.GET_COMMIT_DIFF),
+  generateGitCommitMessage: invoke(RPC_CHANNELS.git.GENERATE_COMMIT_MESSAGE),
   checkGitBash: invoke(RPC_CHANNELS.gitbash.CHECK),
   browseForGitBash: invoke(RPC_CHANNELS.gitbash.BROWSE),
   setGitBashPath: invoke(RPC_CHANNELS.gitbash.SET_PATH),

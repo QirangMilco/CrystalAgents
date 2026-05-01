@@ -199,6 +199,14 @@ import type {
   OAuthResult,
   McpToolsResult,
   GitBashStatus,
+  GitStatusResult,
+  GitFileDiffResult,
+  GitActionResult,
+  GitCommitParams,
+  GenerateGitCommitMessageParams,
+  GitRecentCommitsResult,
+  GitCommitDetailResult,
+  GitGeneratedCommitMessageResult,
   ClaudeOAuthResult,
   UpdateInfo,
   WorkspaceSettings,
@@ -331,6 +339,7 @@ export interface ElectronAPI {
 
   // File operations
   readFile(path: string): Promise<string>
+  writeFileText(path: string, content: string): Promise<{ success: boolean }>
   /** Read a file as binary data (Uint8Array) */
   readFileBinary(path: string): Promise<Uint8Array>
   /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */
@@ -754,6 +763,21 @@ export interface ElectronAPI {
 
   // Git operations
   getGitBranch(dirPath: string): Promise<string | null>
+  getGitStatus(dirPath: string): Promise<GitStatusResult>
+  getGitFileDiff(dirPath: string, filePath: string): Promise<GitFileDiffResult>
+  stageGitFile(dirPath: string, filePath: string): Promise<GitActionResult>
+  unstageGitFile(dirPath: string, filePath: string): Promise<GitActionResult>
+  discardGitFile(dirPath: string, filePath: string): Promise<GitActionResult>
+  stageAllGitFiles(dirPath: string): Promise<GitActionResult>
+  unstageAllGitFiles(dirPath: string): Promise<GitActionResult>
+  discardAllGitFiles(dirPath: string): Promise<GitActionResult>
+  commitGitChanges(dirPath: string, params: GitCommitParams): Promise<GitActionResult>
+  fetchGitChanges(dirPath: string): Promise<GitActionResult>
+  pushGitChanges(dirPath: string): Promise<GitActionResult>
+  pullGitChanges(dirPath: string): Promise<GitActionResult>
+  getGitRecentCommits(dirPath: string, limit?: number): Promise<GitRecentCommitsResult | Extract<GitStatusResult, { ok: false }>>
+  getGitCommitDiff(dirPath: string, commitHash: string): Promise<GitCommitDetailResult | Extract<GitStatusResult, { ok: false }>>
+  generateGitCommitMessage(params: GenerateGitCommitMessageParams): Promise<GitGeneratedCommitMessageResult | Extract<GitActionResult, { ok: false }>>
 
   // Git Bash (Windows)
   checkGitBash(): Promise<GitBashStatus>
@@ -966,6 +990,15 @@ export interface AutomationsNavigationState {
 }
 
 /**
+ * Changes navigation state
+ */
+export interface ChangesNavigationState {
+  navigator: 'changes'
+  details?: { type: 'file'; path: string } | { type: 'history'; commitHash?: string } | null
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
  * Unified navigation state
  */
 export type NavigationState =
@@ -974,6 +1007,7 @@ export type NavigationState =
   | SettingsNavigationState
   | SkillsNavigationState
   | AutomationsNavigationState
+  | ChangesNavigationState
 
 export const isSessionsNavigation = (
   state: NavigationState
@@ -994,6 +1028,10 @@ export const isSkillsNavigation = (
 export const isAutomationsNavigation = (
   state: NavigationState
 ): state is AutomationsNavigationState => state.navigator === 'automations'
+
+export const isChangesNavigation = (
+  state: NavigationState
+): state is ChangesNavigationState => state.navigator === 'changes'
 
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
   navigator: 'sessions',
@@ -1022,6 +1060,11 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   }
   if (state.navigator === 'settings') {
     return `settings:${state.subpage}`
+  }
+  if (state.navigator === 'changes') {
+    if (state.details?.type === 'file') return `changes/file/${state.details.path}`
+    if (state.details?.type === 'history') return state.details.commitHash ? `changes/history/${state.details.commitHash}` : 'changes/history'
+    return 'changes'
   }
   // Chats
   const f = state.filter
@@ -1074,6 +1117,21 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     if (isValidSettingsSubpage(subpage)) {
       return { navigator: 'settings', subpage }
     }
+  }
+
+  // Handle changes
+  if (key === 'changes') return { navigator: 'changes', details: null }
+  if (key === 'changes/history') return { navigator: 'changes', details: { type: 'history' } }
+  if (key.startsWith('changes/history/')) {
+    const commitHash = key.slice(16)
+    return { navigator: 'changes', details: { type: 'history', commitHash: commitHash || undefined } }
+  }
+  if (key.startsWith('changes/file/')) {
+    const path = key.slice(13)
+    if (path) {
+      return { navigator: 'changes', details: { type: 'file', path } }
+    }
+    return { navigator: 'changes', details: null }
   }
 
   // Handle sessions

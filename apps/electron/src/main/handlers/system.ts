@@ -4,10 +4,32 @@ import { homedir } from 'os'
 import { execSync } from 'child_process'
 import { appendFileSync, mkdirSync } from 'fs'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getGitBashPath, setGitBashPath, clearGitBashPath, getAppVariant, getCraftRendererDebugLogPath } from '@craft-agent/shared/config'
+import { getGitBashPath, setGitBashPath, clearGitBashPath, getAppVariant, getCraftRendererDebugLogPath, getDefaultLlmConnection, getLlmConnections, getLlmConnection } from '@craft-agent/shared/config'
+import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
+import { createBackendFromConnection } from '@craft-agent/shared/agent/backend'
+import { i18n, LOCALE_REGISTRY, type LanguageCode } from '@craft-agent/shared/i18n'
+import { getMiniModel, resolveEffectiveConnectionSlug } from '@craft-agent/shared/config/llm-connections'
 import { isSafeExternalUrl } from '@craft-agent/shared/utils/url-safety' 
-import { isUsableGitBashPath, validateGitBashPath } from '@craft-agent/server-core/services'
-import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
+import {
+  commitGitChanges,
+  discardAllGitFiles,
+  discardGitFile,
+  fetchGitChanges,
+  getGitFileDiff,
+  getGitRecentCommits,
+  getGitCommitDiff,
+  getGitStatus,
+  type GitResultFailure,
+  isUsableGitBashPath,
+  pullGitChanges,
+  pushGitChanges,
+  stageAllGitFiles,
+  stageGitFile,
+  unstageAllGitFiles,
+  unstageGitFile,
+  validateGitBashPath,
+} from '@craft-agent/server-core/services'
+import { validateFilePath, getWorkspaceAllowedDirs, buildBackendHostRuntimeContext } from '@craft-agent/server-core/handlers'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
 import {
@@ -29,6 +51,20 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.releaseNotes.GET,
   RPC_CHANNELS.releaseNotes.GET_LATEST_VERSION,
   RPC_CHANNELS.git.GET_BRANCH,
+  RPC_CHANNELS.git.GET_STATUS,
+  RPC_CHANNELS.git.GET_FILE_DIFF,
+  RPC_CHANNELS.git.STAGE_FILE,
+  RPC_CHANNELS.git.UNSTAGE_FILE,
+  RPC_CHANNELS.git.DISCARD_FILE,
+  RPC_CHANNELS.git.STAGE_ALL,
+  RPC_CHANNELS.git.UNSTAGE_ALL,
+  RPC_CHANNELS.git.DISCARD_ALL,
+  RPC_CHANNELS.git.COMMIT,
+  RPC_CHANNELS.git.PUSH,
+  RPC_CHANNELS.git.PULL,
+  RPC_CHANNELS.git.GET_RECENT_COMMITS,
+  RPC_CHANNELS.git.GET_COMMIT_DIFF,
+  RPC_CHANNELS.git.GENERATE_COMMIT_MESSAGE,
   RPC_CHANNELS.gitbash.CHECK,
   RPC_CHANNELS.gitbash.BROWSE,
   RPC_CHANNELS.gitbash.SET_PATH,
@@ -94,6 +130,111 @@ export const HANDLED_CHANNELS = [
   ...GUI_HANDLED_CHANNELS,
 ] as const
 
+function buildCommitMessagePrompt(args: {
+  locale: string
+  language: string
+  status: Extract<Awaited<ReturnType<typeof getGitStatus>>, { ok: true }>
+  stagedDiff: string
+  customPrompt?: string
+}): string {
+  const { locale, language, status, stagedDiff, customPrompt } = args
+  const filesSummary = status.files.map(file => {
+    const stagedLabel = file.staged ? 'staged' : 'unstaged'
+    return `- ${file.path} [${file.status}, ${stagedLabel}, +${file.additions}/-${file.deletions}]`
+  }).join('\n')
+
+  return [
+    'You are generating a Git commit message for the current repository changes.',
+    `Output language: ${language} (locale: ${locale}).`,
+    'Follow conventional git commit style.',
+    'Keep commit type keywords in English when appropriate, such as feat, fix, refactor, docs, test, chore, perf, ci, build, revert.',
+    'Return ONLY the commit message text with no code fences or explanation.',
+    'Prefer a concise subject line. Add a blank line plus bullet list body only when genuinely helpful.',
+    'Base the message on the staged changes first; if nothing is staged, summarize the current working tree changes.',
+    customPrompt?.trim() ? `Additional instruction: ${customPrompt.trim()}` : '',
+    '',
+    'Repository summary:',
+    `- Branch: ${status.summary.branch}`,
+    `- Ahead: ${status.summary.ahead}`,
+    `- Behind: ${status.summary.behind}`,
+    `- Files changed: ${status.files.length}`,
+    `- Staged files: ${status.summary.staged}`,
+    `- Untracked files: ${status.summary.untracked}`,
+    `- Conflicts: ${status.summary.conflicts}`,
+    '',
+    'Changed files:',
+    filesSummary || '- None',
+    '',
+    'Staged diff:',
+    stagedDiff || '(No staged diff available. Use the file summary above.)',
+  ].filter(Boolean).join('\n')
+}
+
+async function generateGitCommitMessageFromConnection(args: {
+  connectionSlug: string
+  workspaceId: string
+  dirPath: string
+  customPrompt?: string
+  deps: HandlerDeps
+}): Promise<{ ok: true; message: string; connectionSlug: string } | GitResultFailure> {
+  const { connectionSlug, workspaceId, dirPath, customPrompt, deps } = args
+  const status = getGitStatus(dirPath)
+  if (!status.ok) return status
+
+  const stagedDiff = getGitFileDiff(dirPath, '--cached')
+  const diffText = stagedDiff.ok ? stagedDiff.diff : ''
+  const langCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode
+  const langEntry = LOCALE_REGISTRY[langCode]
+  const language = langEntry?.nativeName ?? 'English'
+  const connection = getLlmConnection(connectionSlug)
+  const resolvedMiniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
+
+  const backend = createBackendFromConnection(connectionSlug, {
+    workspace: {
+      id: workspaceId,
+      name: workspaceId,
+      rootPath: dirPath,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    },
+    miniModel: resolvedMiniModel,
+    session: {
+      id: `git-commit-${Date.now()}`,
+      workspaceId,
+      workspaceName: workspaceId,
+      name: 'Git Commit Message',
+      messages: [],
+      isProcessing: false,
+      lastMessageAt: Date.now(),
+      llmConnection: connectionSlug,
+      createdAt: Date.now(),
+    },
+    isHeadless: true,
+    skipConfigWatcher: true,
+    systemPromptPreset: 'mini',
+  } as any, buildBackendHostRuntimeContext(deps.platform))
+
+  try {
+    await backend.postInit()
+    const prompt = buildCommitMessagePrompt({
+      locale: langCode,
+      language,
+      status,
+      stagedDiff: diffText,
+      customPrompt,
+    })
+    const message = (await backend.runMiniCompletion(prompt))?.trim()
+    if (!message) {
+      return { ok: false, reason: 'unknown_error', message: 'Failed to generate commit message' }
+    }
+    return { ok: true, message, connectionSlug }
+  } catch (error) {
+    return { ok: false, reason: 'unknown_error', message: error instanceof Error ? error.message : 'Failed to generate commit message' }
+  } finally {
+    backend.destroy()
+  }
+}
+
 export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps): void {
   const windowManager = deps.windowManager
 
@@ -145,6 +286,83 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     } catch {
       return null
     }
+  })
+
+  server.handle(RPC_CHANNELS.git.GET_STATUS, async (_ctx, dirPath: string) => {
+    return getGitStatus(dirPath)
+  })
+
+  server.handle(RPC_CHANNELS.git.GET_FILE_DIFF, async (_ctx, dirPath: string, filePath: string) => {
+    return getGitFileDiff(dirPath, filePath)
+  })
+
+  server.handle(RPC_CHANNELS.git.STAGE_FILE, async (_ctx, dirPath: string, filePath: string) => {
+    return stageGitFile(dirPath, filePath)
+  })
+
+  server.handle(RPC_CHANNELS.git.UNSTAGE_FILE, async (_ctx, dirPath: string, filePath: string) => {
+    return unstageGitFile(dirPath, filePath)
+  })
+
+  server.handle(RPC_CHANNELS.git.DISCARD_FILE, async (_ctx, dirPath: string, filePath: string) => {
+    return discardGitFile(dirPath, filePath)
+  })
+
+  server.handle(RPC_CHANNELS.git.STAGE_ALL, async (_ctx, dirPath: string) => {
+    return stageAllGitFiles(dirPath)
+  })
+
+  server.handle(RPC_CHANNELS.git.UNSTAGE_ALL, async (_ctx, dirPath: string) => {
+    return unstageAllGitFiles(dirPath)
+  })
+
+  server.handle(RPC_CHANNELS.git.DISCARD_ALL, async (_ctx, dirPath: string) => {
+    return discardAllGitFiles(dirPath)
+  })
+
+  server.handle(RPC_CHANNELS.git.COMMIT, async (_ctx, dirPath: string, params: { message: string }) => {
+    return commitGitChanges(dirPath, params)
+  })
+
+  server.handle(RPC_CHANNELS.git.FETCH, async (_ctx, dirPath: string) => {
+    return fetchGitChanges(dirPath)
+  })
+
+  server.handle(RPC_CHANNELS.git.PUSH, async (_ctx, dirPath: string) => {
+    return pushGitChanges(dirPath)
+  })
+
+  server.handle(RPC_CHANNELS.git.PULL, async (_ctx, dirPath: string) => {
+    return pullGitChanges(dirPath)
+  })
+
+  server.handle(RPC_CHANNELS.git.GET_RECENT_COMMITS, async (_ctx, dirPath: string, limit?: number) => {
+    return getGitRecentCommits(dirPath, limit)
+  })
+
+  server.handle(RPC_CHANNELS.git.GET_COMMIT_DIFF, async (_ctx, dirPath: string, commitHash: string) => {
+    return getGitCommitDiff(dirPath, commitHash)
+  })
+
+  server.handle(RPC_CHANNELS.git.GENERATE_COMMIT_MESSAGE, async (_ctx, params: { workspaceId: string; dirPath: string; connectionSlug?: string; customPrompt?: string }) => {
+    const wsConfig = loadWorkspaceConfig(params.dirPath)
+    const connections = getLlmConnections().map(connection => ({ slug: connection.slug, isDefault: connection.slug === getDefaultLlmConnection() }))
+    const connectionSlug = params.connectionSlug
+      ?? resolveEffectiveConnectionSlug(undefined, wsConfig?.defaults?.defaultLlmConnection, connections)
+      ?? getDefaultLlmConnection()
+      ?? undefined
+
+    if (!connectionSlug) {
+      return { ok: false, reason: 'unknown_error' as const, message: 'No LLM connection configured' }
+    }
+
+    return generateGitCommitMessageFromConnection({
+      connectionSlug,
+      workspaceId: params.workspaceId,
+      dirPath: params.dirPath,
+      customPrompt: params.customPrompt,
+      deps,
+    })
   })
 
   // Git Bash detection and configuration (Windows only)

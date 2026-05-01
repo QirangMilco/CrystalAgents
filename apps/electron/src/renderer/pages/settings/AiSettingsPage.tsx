@@ -577,8 +577,10 @@ export default function AiSettingsPage() {
     apiKey?: string
     baseUrl?: string
     connectionDefaultModel?: string
+    miniModel?: string
     activePreset?: string
-    models?: string[]
+    models?: Array<string | ModelDefinition>
+    contextWindow?: number
     customApi?: CustomEndpointApi
     modelsUrl?: string
   } | undefined>(undefined)
