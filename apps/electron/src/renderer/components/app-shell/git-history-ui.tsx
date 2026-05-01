@@ -532,7 +532,7 @@ export function GitHistoryGraphRow({ layout, row, rowIndex }: { layout: GitGraph
     addHorizontal(`fh-${row.commitHash}-${laneIndex}`, laneIndex, row.nodeLane, 50, laneIndex)
   }
 
-  if (row.topLaneHashes[row.nodeLane] === row.commitHash) {
+  if (rowIndex > 0 && row.topLaneHashes[row.nodeLane] === row.commitHash) {
     addVertical(`nt-${row.commitHash}`, row.nodeLane, 0, 50)
   }
 
