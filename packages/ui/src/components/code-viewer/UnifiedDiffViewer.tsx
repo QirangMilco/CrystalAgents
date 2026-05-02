@@ -11,9 +11,9 @@
 import * as React from 'react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { FileDiff, type FileDiffProps } from '@pierre/diffs/react'
-import { parsePatchFiles, DIFFS_TAG_NAME, registerCustomTheme, resolveTheme, type FileDiffMetadata } from '@pierre/diffs'
+import { parsePatchFiles, DIFFS_TAG_NAME, type FileDiffMetadata } from '@pierre/diffs'
 import { cn } from '../../lib/utils'
-import { LANGUAGE_MAP } from './language-map'
+import { getDiffViewerUnsafeCss } from './diffViewerUnsafeCss'
 
 // Register the diffs-container custom element if not already registered
 // (shared with ShikiDiffViewer - safe to call multiple times)
@@ -116,10 +116,7 @@ export function UnifiedDiffViewer({
   // to craft-dark/craft-light which have transparent bg for CSS variable theming
   const resolvedThemeName = shikiTheme || (theme === 'dark' ? 'craft-dark' : 'craft-light')
 
-  // When onFileHeaderClick is provided, inject CSS to make the header look clickable
-  const unsafeCSS = onFileHeaderClick
-    ? '[data-diffs-header] { cursor: pointer; } [data-diffs-header]:hover [data-title] { text-decoration: underline; }'
-    : undefined
+  const unsafeCSS = useMemo(() => getDiffViewerUnsafeCss(!!onFileHeaderClick), [onFileHeaderClick])
 
   const options: FileDiffProps<undefined>['options'] = useMemo(() => ({
     theme: resolvedThemeName,
@@ -209,7 +206,7 @@ export function UnifiedDiffViewer({
     <div
       ref={containerRef}
       className={cn(
-        'h-full w-full overflow-auto transition-opacity duration-200',
+        'h-full w-full overflow-hidden transition-opacity duration-200',
         className
       )}
       style={{

@@ -16,7 +16,6 @@ import { Codicon } from '@/components/ui/Codicon'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { useAppShellContext } from '@/context/AppShellContext'
-import { ChangesCommitComposer } from './ChangesCommitComposer'
 import { ChangesConflictEditor } from './ChangesConflictEditor'
 
 const detailStatusClassName: Record<ChangedFileItem['status'], string> = {
@@ -56,7 +55,6 @@ export function ChangesDetailPanel({ workspaceRootPath, filePath }: ChangesDetai
   const [loading, setLoading] = useState(false)
   const [actionBusyKey, setActionBusyKey] = useState<string | null>(null)
   const [pendingDiscard, setPendingDiscard] = useState(false)
-  const [commitMessage, setCommitMessage] = useState('')
   const [diffViewerSettings, setDiffViewerSettings] = useState<Partial<DiffViewerSettings>>({})
 
   useEffect(() => {
@@ -98,10 +96,6 @@ export function ChangesDetailPanel({ workspaceRootPath, filePath }: ChangesDetai
     if (!filePath || !statusResult?.ok) return null
     return statusResult.files.find(file => file.path === filePath) ?? null
   }, [filePath, statusResult])
-  const summary = statusResult?.ok ? statusResult.summary : null
-  const hasStagedFiles = (summary?.staged ?? 0) > 0
-  const canPull = (summary?.behind ?? 0) > 0
-  const canPush = (summary?.ahead ?? 0) > 0
   const isConflictMode = selectedFile?.status === 'conflict'
   const absoluteFilePath = useMemo(() => {
     if (!workspaceRootPath || !filePath) return filePath ?? ''
@@ -154,14 +148,6 @@ export function ChangesDetailPanel({ workspaceRootPath, filePath }: ChangesDetai
     }
   }, [filePath, navigate, t, workspaceRootPath])
 
-  const handleCommit = React.useCallback(async () => {
-    if (!workspaceRootPath || !commitMessage.trim()) return
-    const result = await runGitAction('commit', () => window.electronAPI.commitGitChanges(workspaceRootPath, { message: commitMessage.trim() }))
-    if (result.ok) {
-      setCommitMessage('')
-    }
-  }, [commitMessage, runGitAction, workspaceRootPath])
-
   if (!filePath) {
     return (
       <Panel variant="grow">
@@ -191,51 +177,21 @@ export function ChangesDetailPanel({ workspaceRootPath, filePath }: ChangesDetai
               <div className="mt-1 truncate text-xs text-muted-foreground">{t('changes.renamedFromLabel')}: {selectedFile.oldPath}</div>
             )}
             {selectedFile && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {isConflictMode && <StatusBadge label={t('changes.conflictsLabel')} tone="warning" />}
-                <StatusBadge label={t(`changes.${selectedFile.status}`)} />
-                {selectedFile.staged && <StatusBadge label={t('changes.stagedLabel')} tone="success" />}
-                {selectedFile.unstaged && <StatusBadge label={t('changes.unstaged')} tone="warning" />}
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                {isConflictMode && <span className="font-medium text-amber-600">{t('changes.conflictsLabel')}</span>}
+                <span className="text-muted-foreground">{t(`changes.${selectedFile.status}`)}</span>
+                {selectedFile.staged && <span className="font-medium text-emerald-600">{t('changes.stagedLabel')}</span>}
+                {selectedFile.unstaged && <span className="font-medium text-amber-600">{t('changes.unstaged')}</span>}
                 {(selectedFile.additions > 0 || selectedFile.deletions > 0) && (
-                  <StatusBadge
-                    label={t('changes.changeStats', { additions: selectedFile.additions, deletions: selectedFile.deletions })}
-                  />
+                  <span className="inline-flex items-center gap-2 font-mono">
+                    <span className="text-red-500">-{selectedFile.deletions}</span>
+                    <span className="text-emerald-500">+{selectedFile.additions}</span>
+                  </span>
                 )}
               </div>
             )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {!isConflictMode && (
-              <>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!workspaceRootPath || !!actionBusyKey || !canPush}
-                  onClick={() => workspaceRootPath && void runGitAction('push', () => window.electronAPI.pushGitChanges(workspaceRootPath))}
-                >
-                  <Codicon name="repo-push" className="mr-1.5 text-[14px] leading-none" />
-                  {t('changes.push')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!workspaceRootPath || !!actionBusyKey}
-                  onClick={() => workspaceRootPath && void runGitAction('fetch', () => window.electronAPI.fetchGitChanges(workspaceRootPath))}
-                >
-                  <Codicon name="repo-fetch" className="mr-1.5 text-[14px] leading-none" />
-                  {t('changes.fetch')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!workspaceRootPath || !!actionBusyKey || !canPull}
-                  onClick={() => workspaceRootPath && void runGitAction('pull', () => window.electronAPI.pullGitChanges(workspaceRootPath))}
-                >
-                  <Codicon name="repo-pull" className="mr-1.5 text-[14px] leading-none" />
-                  {t('changes.pull')}
-                </Button>
-              </>
-            )}
             {selectedFile?.staged && !selectedFile?.unstaged ? (
               <Button
                 size="sm"
@@ -271,23 +227,6 @@ export function ChangesDetailPanel({ workspaceRootPath, filePath }: ChangesDetai
           </div>
         </div>
       </div>
-      {!isConflictMode && (
-        <div className="border-b border-border/40 px-4 py-3">
-          <ChangesCommitComposer
-            workspaceId={activeWorkspaceId}
-            workspaceRootPath={workspaceRootPath}
-            llmConnections={llmConnections}
-            workspaceDefaultConnection={workspaceDefaultLlmConnection}
-            disabled={!workspaceRootPath || !hasStagedFiles}
-            hasStagedFiles={hasStagedFiles}
-            actionBusyKey={actionBusyKey}
-            value={commitMessage}
-            onChange={setCommitMessage}
-            onCommit={() => void handleCommit()}
-          />
-        </div>
-      )}
-
       <Dialog open={pendingDiscard} onOpenChange={setPendingDiscard}>
         <DialogContent showCloseButton={false} className="sm:max-w-md">
           <DialogHeader>

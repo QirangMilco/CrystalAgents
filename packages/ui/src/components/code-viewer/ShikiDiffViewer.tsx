@@ -14,6 +14,7 @@ import { FileDiff, type FileDiffMetadata, type FileDiffProps } from '@pierre/dif
 import { parseDiffFromFile, DIFFS_TAG_NAME, type FileContents } from '@pierre/diffs'
 import { cn } from '../../lib/utils'
 import { LANGUAGE_MAP } from './language-map'
+import { getDiffViewerUnsafeCss } from './diffViewerUnsafeCss'
 import { registerCraftShikiThemes } from './registerShikiThemes'
 
 // Register the diffs-container custom element if not already registered
@@ -127,10 +128,7 @@ export function ShikiDiffViewer({
   // Diff options - use the app's Shiki theme if available, otherwise fall back
   // to craft-dark/craft-light which have transparent bg for CSS variable theming
   const resolvedThemeName = shikiTheme || (theme === 'dark' ? 'craft-dark' : 'craft-light')
-  // When onFileHeaderClick is provided, inject CSS to make the header look clickable
-  const unsafeCSS = onFileHeaderClick
-    ? '[data-diffs-header] { cursor: pointer; } [data-diffs-header]:hover [data-title] { text-decoration: underline; }'
-    : undefined
+  const unsafeCSS = useMemo(() => getDiffViewerUnsafeCss(!!onFileHeaderClick), [onFileHeaderClick])
 
   const options: FileDiffProps<undefined>['options'] = useMemo(() => ({
     theme: resolvedThemeName,
