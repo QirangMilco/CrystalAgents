@@ -28,6 +28,7 @@ export const KEYS = {
   focusPeekOpenDelayMs: 'focus-peek-open-delay-ms',
   focusPeekAutoHideDelayMs: 'focus-peek-auto-hide-delay-ms',
   focusActivityRailContainerMode: 'focus-activity-rail-container-mode',
+  focusActivityRailTopOffset: 'focus-activity-rail-top-offset',
 
   // Session files panel state
   sessionFilesExpandedFolders: 'session-files-expanded', // Expanded folders in session files tree (keyed by sessionId)

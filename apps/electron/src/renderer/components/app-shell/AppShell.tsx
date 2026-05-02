@@ -647,7 +647,7 @@ function AppShellContent({
 
   const isChatInterface = isSessionsNavigation(navState)
   const isFocusModeEnabled = isSidebarAndNavigatorHidden
-  const isFocusModeActive = isFocusModeEnabled && isChatInterface
+  const isFocusModeActive = isFocusModeEnabled
   const effectiveSidebarAndNavigatorHidden = isFocusModeActive || isAutoCompact
 
   const [focusPeekPanel, setFocusPeekPanel] = React.useState<'sidebar' | 'navigator' | 'changes' | null>(null)
@@ -683,6 +683,11 @@ function AppShellContent({
   const [focusActivityRailContainerMode, setFocusActivityRailContainerMode] = React.useState<'full-height' | 'content-height'>(() =>
     storage.get(storage.KEYS.focusActivityRailContainerMode, 'full-height') as 'full-height' | 'content-height'
   )
+  const [focusActivityRailTopOffset, setFocusActivityRailTopOffset] = React.useState(() =>
+    storage.get(storage.KEYS.focusActivityRailTopOffset, 0)
+  )
+  const focusActivityRailRef = React.useRef<HTMLDivElement>(null)
+  const focusActivityRailDragRef = React.useRef<{ startY: number; startOffset: number; moved: boolean } | null>(null)
   const showFocusPeekSidebar = isFocusModeEnabled && focusPeekPanel === 'sidebar'
   const showFocusPeekNavigator = isFocusModeEnabled && focusPeekPanel === 'navigator'
   const showFocusPeekChanges = isFocusModeEnabled && focusPeekPanel === 'changes'
@@ -690,6 +695,7 @@ function AppShellContent({
   const showFocusPeekTriggers = isFocusModeEnabled
   const ACTIVITY_RAIL_WIDTH = 48
   const isFocusActivityRailContentHeight = focusActivityRailContainerMode === 'content-height'
+  const effectiveFocusActivityRailTopOffset = isFocusActivityRailContentHeight ? focusActivityRailTopOffset : 0
   const showFocusActivityRail = showFocusPeekTriggers
   const activityRailOffset = showFocusActivityRail ? ACTIVITY_RAIL_WIDTH + PANEL_GAP : 0
   const effectiveSidebarWidth = showFocusPeekSidebar ? sidebarWidth : (effectiveSidebarAndNavigatorHidden ? 0 : (isSidebarVisible ? sidebarWidth : 0))
@@ -2009,6 +2015,41 @@ function AppShellContent({
     }
   }, [])
 
+  React.useEffect(() => {
+    storage.set(storage.KEYS.focusActivityRailTopOffset, focusActivityRailTopOffset)
+  }, [focusActivityRailTopOffset])
+
+  const handleFocusActivityRailMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isFocusActivityRailContentHeight) return
+    if ((event.target as HTMLElement).closest('button, [role="button"], a, input, textarea, select')) return
+
+    focusActivityRailDragRef.current = {
+      startY: event.clientY,
+      startOffset: focusActivityRailTopOffset,
+      moved: false,
+    }
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const drag = focusActivityRailDragRef.current
+      if (!drag) return
+      const delta = moveEvent.clientY - drag.startY
+      if (Math.abs(delta) > 2) drag.moved = true
+      const shellHeight = shellRef.current?.clientHeight ?? window.innerHeight
+      const railHeight = focusActivityRailRef.current?.offsetHeight ?? 0
+      const maxOffset = Math.max(0, shellHeight - railHeight - PANEL_STACK_VERTICAL_OVERFLOW)
+      setFocusActivityRailTopOffset(Math.min(maxOffset, Math.max(0, drag.startOffset + delta)))
+    }
+
+    const handleMouseUp = () => {
+      focusActivityRailDragRef.current = null
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [focusActivityRailTopOffset, isFocusActivityRailContentHeight])
+
   // Listen for focus mode toggle from menu (View → Focus Mode)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onMenuToggleFocusMode?.(() => {
@@ -2491,6 +2532,47 @@ function AppShellContent({
     }
   }, [sidebarFocused, focusedSidebarItemId, unifiedSidebarItems])
 
+  const focusNavigatorRailInfo = React.useMemo(() => {
+    if (isSourcesNavigation(navState)) {
+      return { icon: <DatabaseZap className="h-4 w-4" />, tooltip: t('sidebar.sources'), panel: 'navigator' as const }
+    }
+    if (isSkillsNavigation(navState)) {
+      return { icon: <Zap className="h-4 w-4" />, tooltip: t('sidebar.allSkills'), panel: 'navigator' as const }
+    }
+    if (isAutomationsNavigation(navState)) {
+      return { icon: <ListTodo className="h-4 w-4" />, tooltip: t('sidebar.allAutomations'), panel: 'navigator' as const }
+    }
+    if (isSettingsNavigation(navState)) {
+      return { icon: <Settings className="h-4 w-4" />, tooltip: t('sidebar.settings'), panel: 'navigator' as const }
+    }
+    if (isChangesNavigation(navState)) {
+      return { icon: <GitCompare className="h-4 w-4" />, tooltip: t('sidebar.changes'), panel: 'changes' as const }
+    }
+    if (sessionFilter?.kind === 'label') {
+      return { icon: <Tag className="h-4 w-4" />, tooltip: sessionFilter.labelId === '__all__' ? t('sidebar.labels') : getLabelDisplayName(labelConfigs, sessionFilter.labelId), panel: 'navigator' as const }
+    }
+    if (sessionFilter?.kind === 'flagged') {
+      return { icon: <Flag className="h-4 w-4" />, tooltip: t('sidebar.flagged'), panel: 'navigator' as const }
+    }
+    if (sessionFilter?.kind === 'archived') {
+      return { icon: <Archive className="h-4 w-4" />, tooltip: t('sidebar.archived'), panel: 'navigator' as const }
+    }
+    if (sessionFilter?.kind === 'state') {
+      const state = effectiveSessionStatuses.find(s => s.id === sessionFilter.stateId)
+      return {
+        icon: state?.icon ? <span className="flex h-4 w-4 items-center justify-center [&>svg]:h-full [&>svg]:w-full" style={state.iconColorable ? { color: state.resolvedColor } : undefined}>{state.icon}</span> : <Inbox className="h-4 w-4" />,
+        tooltip: state ? t(`status.${state.id}`, state.label) : t('sidebar.allSessions'),
+        panel: 'navigator' as const,
+      }
+    }
+    if (sessionFilter?.kind === 'view') {
+      return { icon: <Layers className="h-4 w-4" />, tooltip: sessionFilter.viewId === '__all__' ? t('sidebar.views') : (viewConfigs.find(v => v.id === sessionFilter.viewId)?.name || t('sidebar.views')), panel: 'navigator' as const }
+    }
+    return { icon: <Inbox className="h-4 w-4" />, tooltip: t('sidebar.allSessions'), panel: 'navigator' as const }
+  }, [navState, sessionFilter, t, labelConfigs, effectiveSessionStatuses, viewConfigs])
+
+  const showFocusChangesRailButton = isSessionsNavigation(navState) && sessionFilter?.kind === 'allSessions'
+
   // Get title based on navigation state
   const listTitle = React.useMemo(() => {
     // Sources navigator
@@ -2639,10 +2721,11 @@ function AppShellContent({
               "relative z-[70] shrink-0 self-start",
               !isFocusActivityRailContentHeight && "self-stretch"
             )}
+            ref={focusActivityRailRef}
             style={{
               width: ACTIVITY_RAIL_WIDTH,
               ...(isFocusActivityRailContentHeight
-                ? { paddingTop: PANEL_STACK_VERTICAL_OVERFLOW }
+                ? { paddingTop: PANEL_STACK_VERTICAL_OVERFLOW + effectiveFocusActivityRailTopOffset }
                 : {
                     paddingTop: PANEL_STACK_VERTICAL_OVERFLOW,
                     paddingBottom: PANEL_STACK_VERTICAL_OVERFLOW,
@@ -2650,6 +2733,7 @@ function AppShellContent({
                     marginBottom: -PANEL_STACK_VERTICAL_OVERFLOW,
                   }),
             }}
+            onMouseDown={handleFocusActivityRailMouseDown}
             onMouseEnter={() => {
               if (focusPeekCloseTimerRef.current !== null) {
                 window.clearTimeout(focusPeekCloseTimerRef.current)
@@ -2662,7 +2746,7 @@ function AppShellContent({
           >
             <div className={cn(
               "flex flex-col items-center gap-2 rounded-[12px] border border-border/40 bg-panel/90 px-1.5 py-2 shadow-middle backdrop-blur",
-              isFocusActivityRailContentHeight ? "h-auto" : "h-full"
+              isFocusActivityRailContentHeight ? "h-auto cursor-grab active:cursor-grabbing" : "h-full"
             )}>
               <HeaderIconButton
                 icon={<PanelLeftRounded className="h-4 w-4" />}
@@ -2674,23 +2758,25 @@ function AppShellContent({
                 onKeyDown={(e) => handleFocusPeekTriggerKeyDown(e, 'sidebar')}
               />
               <HeaderIconButton
-                icon={<PanelRightRounded className="h-4 w-4" />}
-                tooltip={t('sidebar.allSessions')}
-                aria-label={t('sidebar.allSessions')}
-                className={cn("h-9 w-9 rounded-[10px]", showFocusPeekNavigator && "bg-foreground/6 text-foreground")}
-                onMouseEnter={() => scheduleFocusPeekOpen('navigator')}
-                onFocus={() => openFocusPeek('navigator')}
-                onKeyDown={(e) => handleFocusPeekTriggerKeyDown(e, 'navigator')}
+                icon={focusNavigatorRailInfo.icon}
+                tooltip={focusNavigatorRailInfo.tooltip}
+                aria-label={focusNavigatorRailInfo.tooltip}
+                className={cn("h-9 w-9 rounded-[10px]", (focusNavigatorRailInfo.panel === 'changes' ? showFocusPeekChanges : showFocusPeekNavigator) && "bg-foreground/6 text-foreground")}
+                onMouseEnter={() => scheduleFocusPeekOpen(focusNavigatorRailInfo.panel)}
+                onFocus={() => openFocusPeek(focusNavigatorRailInfo.panel)}
+                onKeyDown={(e) => handleFocusPeekTriggerKeyDown(e, focusNavigatorRailInfo.panel)}
               />
-              <HeaderIconButton
-                icon={<GitCompare className="h-4 w-4" />}
-                tooltip={t('sidebar.changes')}
-                aria-label={t('sidebar.changes')}
-                className={cn("h-9 w-9 rounded-[10px]", showFocusPeekChanges && "bg-foreground/6 text-foreground")}
-                onMouseEnter={() => scheduleFocusPeekOpen('changes')}
-                onFocus={() => openFocusPeek('changes')}
-                onKeyDown={(e) => handleFocusPeekTriggerKeyDown(e, 'changes')}
-              />
+              {showFocusChangesRailButton && (
+                <HeaderIconButton
+                  icon={<GitCompare className="h-4 w-4" />}
+                  tooltip={t('sidebar.changes')}
+                  aria-label={t('sidebar.changes')}
+                  className={cn("h-9 w-9 rounded-[10px]", showFocusPeekChanges && "bg-foreground/6 text-foreground")}
+                  onMouseEnter={() => scheduleFocusPeekOpen('changes')}
+                  onFocus={() => openFocusPeek('changes')}
+                  onKeyDown={(e) => handleFocusPeekTriggerKeyDown(e, 'changes')}
+                />
+              )}
             </div>
           </div>
         )}
@@ -3775,9 +3861,9 @@ function AppShellContent({
             width: PANEL_SASH_HIT_WIDTH,
             top: PANEL_STACK_VERTICAL_OVERFLOW,
             bottom: PANEL_STACK_VERTICAL_OVERFLOW,
-            left: activityRailOffset + (effectiveSidebarWidth > 0
+            left: effectiveSidebarWidth > 0
               ? effectiveSidebarWidth + (PANEL_GAP / 2) - PANEL_SASH_HALF_HIT_WIDTH
-              : -PANEL_GAP),
+              : -PANEL_GAP,
             transition: isResizing === 'sidebar' ? undefined : 'left 0.15s ease-out',
           }}
         >
@@ -3809,7 +3895,6 @@ function AppShellContent({
             top: PANEL_STACK_VERTICAL_OVERFLOW,
             bottom: PANEL_STACK_VERTICAL_OVERFLOW,
             left:
-              activityRailOffset +
               (effectiveSidebarWidth > 0 ? effectiveSidebarWidth + PANEL_GAP : PANEL_EDGE_INSET) +
               effectiveNavigatorWidth +
               (PANEL_GAP / 2) -
