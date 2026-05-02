@@ -21,6 +21,7 @@ export interface SessionListContextValue {
   onSendToWorkspace?: (sessionIds: string[]) => void
   onFocusZone: () => void
   onKeyDown: (e: React.KeyboardEvent, item: SessionMeta) => void
+  onMenuOpenChange?: (open: boolean) => void
 
   // Shared config
   sessionStatuses: SessionStatus[]

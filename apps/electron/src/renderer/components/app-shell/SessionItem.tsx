@@ -138,6 +138,7 @@ export function SessionItem({
         />
       }
       contextMenuContent={ctx.isMultiSelectActive && isInMultiSelect ? <BatchSessionMenu /> : undefined}
+      onMenuOpenChange={ctx.onMenuOpenChange}
       icon={
         <>
           <SessionStatusIcon item={item} />

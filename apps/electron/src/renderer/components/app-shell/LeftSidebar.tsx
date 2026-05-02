@@ -106,6 +106,8 @@ interface LeftSidebarProps {
   focusedItemId?: string | null
   /** Whether this is a nested sidebar (child of expandable item) */
   isNested?: boolean
+  /** Called when a sidebar context menu opens/closes. Used to keep focus-mode peek panels open while menu portals are hovered. */
+  onContextMenuOpenChange?: (open: boolean) => void
 }
 
 // Stagger animation for child items
@@ -165,7 +167,7 @@ const itemVariants: Variants = {
  * - Uses @dnd-kit with DragOverlay portaled to document.body (no clipping)
  * - Two-phase drop animation: overlay fades out, ghost fades in
  */
-export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, isNested }: LeftSidebarProps) {
+export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, isNested, onContextMenuOpenChange }: LeftSidebarProps) {
   // For nested sidebars, wrap in motion container for stagger effect
   const NavWrapper = isNested ? motion.nav : 'nav'
   const navProps = isNested ? {
@@ -217,7 +219,7 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
 
           // Determine which expanded content to render (sortable vs regular)
           const expandedContent = link.expandable && link.items && link.expanded
-            ? renderExpandedContent(link, getItemProps, focusedItemId, isNested)
+            ? renderExpandedContent(link, getItemProps, focusedItemId, isNested, onContextMenuOpenChange)
             : null
 
           // Wrap with context menu if configured, scoped to button only.
@@ -226,7 +228,7 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
           const content = (
             <div className="group/section">
               {link.contextMenu ? (
-                <ContextMenu modal={true}>
+                <ContextMenu modal={true} onOpenChange={onContextMenuOpenChange}>
                   <ContextMenuTrigger asChild>
                     {buttonElement}
                   </ContextMenuTrigger>
@@ -300,7 +302,8 @@ function renderExpandedContent(
   link: LinkItem,
   getItemProps: LeftSidebarProps['getItemProps'],
   focusedItemId: string | null | undefined,
-  isNested: boolean | undefined
+  isNested: boolean | undefined,
+  onContextMenuOpenChange?: (open: boolean) => void
 ): React.ReactNode {
   // Flat sortable (e.g., statuses): wrap items in SortableList
   if (link.sortable && link.items) {
@@ -318,6 +321,7 @@ function renderExpandedContent(
         getItemProps={getItemProps}
         focusedItemId={focusedItemId}
         trailingItems={trailingItems.length > 0 ? trailingItems : undefined}
+        onContextMenuOpenChange={onContextMenuOpenChange}
       />
     )
   }
@@ -330,6 +334,7 @@ function renderExpandedContent(
       getItemProps={getItemProps}
       focusedItemId={focusedItemId}
       links={link.items!}
+      onContextMenuOpenChange={onContextMenuOpenChange}
     />
   )
 }
@@ -345,9 +350,10 @@ interface SortableStatusListProps {
   focusedItemId: string | null | undefined
   /** Non-sortable items rendered after the sortable list (e.g., Flagged, Archived) */
   trailingItems?: LinkItem[]
+  onContextMenuOpenChange?: (open: boolean) => void
 }
 
-function SortableStatusList({ items, onReorder, getItemProps, focusedItemId, trailingItems }: SortableStatusListProps) {
+function SortableStatusList({ items, onReorder, getItemProps, focusedItemId, trailingItems, onContextMenuOpenChange }: SortableStatusListProps) {
   // Filter to LinkItems only (separators don't participate in DnD)
   const linkItems = items.filter((item): item is LinkItem => !isSeparatorItem(item))
 
@@ -382,7 +388,7 @@ function SortableStatusList({ items, onReorder, getItemProps, focusedItemId, tra
           renderItem={(item) => (
             <div className="group/section">
               {item.contextMenu ? (
-                <ContextMenu modal={true}>
+                <ContextMenu modal={true} onOpenChange={onContextMenuOpenChange}>
                   <ContextMenuTrigger asChild>
                     <SidebarButton
                       link={item}

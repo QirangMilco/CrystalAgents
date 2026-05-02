@@ -653,6 +653,7 @@ function AppShellContent({
   const [focusPeekPanel, setFocusPeekPanel] = React.useState<'sidebar' | 'navigator' | 'changes' | null>(null)
   const focusPeekOpenTimerRef = useRef<number | null>(null)
   const focusPeekCloseTimerRef = useRef<number | null>(null)
+  const focusPeekContextMenuOpenRef = useRef(false)
 
   // What's New overlay
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
@@ -735,7 +736,7 @@ function AppShellContent({
   }, [isFocusModeEnabled])
 
   const scheduleFocusPeekClose = useCallback(() => {
-    if (!isFocusModeEnabled) return
+    if (!isFocusModeEnabled || focusPeekContextMenuOpenRef.current) return
     if (focusPeekOpenTimerRef.current !== null) {
       window.clearTimeout(focusPeekOpenTimerRef.current)
       focusPeekOpenTimerRef.current = null
@@ -746,7 +747,9 @@ function AppShellContent({
     const autoHideDelayRaw = storage.get(storage.KEYS.focusPeekAutoHideDelayMs, 80)
     const autoHideDelayMs = Number.isFinite(autoHideDelayRaw) ? Math.min(600, Math.max(0, Math.round(autoHideDelayRaw))) : 80
     focusPeekCloseTimerRef.current = window.setTimeout(() => {
-      setFocusPeekPanel(null)
+      if (!focusPeekContextMenuOpenRef.current) {
+        setFocusPeekPanel(null)
+      }
       focusPeekCloseTimerRef.current = null
     }, autoHideDelayMs)
   }, [isFocusModeEnabled])
@@ -755,6 +758,18 @@ function AppShellContent({
     clearFocusPeekTimers()
     setFocusPeekPanel(null)
   }, [clearFocusPeekTimers])
+
+  const handleFocusPeekContextMenuOpenChange = useCallback((open: boolean) => {
+    focusPeekContextMenuOpenRef.current = open
+    if (open) {
+      if (focusPeekCloseTimerRef.current !== null) {
+        window.clearTimeout(focusPeekCloseTimerRef.current)
+        focusPeekCloseTimerRef.current = null
+      }
+    } else {
+      scheduleFocusPeekClose()
+    }
+  }, [scheduleFocusPeekClose])
 
   const handleFocusPeekTriggerKeyDown = useCallback((event: React.KeyboardEvent, panel: 'sidebar' | 'navigator' | 'changes') => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -2809,7 +2824,7 @@ function AppShellContent({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div>
-                        <ContextMenu modal={true}>
+                        <ContextMenu modal={true} onOpenChange={handleFocusPeekContextMenuOpenChange}>
                           <ContextMenuTrigger asChild>
                             <Button
                               variant="ghost"
@@ -2839,6 +2854,7 @@ function AppShellContent({
                   isCollapsed={false}
                   getItemProps={getSidebarItemProps}
                   focusedItemId={focusedSidebarItemId}
+                  onContextMenuOpenChange={handleFocusPeekContextMenuOpenChange}
                   links={[
                     // --- Sessions Section ---
                     // All Sessions: expandable with status children (sortable) + Flagged & Archived as trailing items
@@ -3832,6 +3848,7 @@ function AppShellContent({
                   onNavigateToSession={panelCount > 1 ? navigateToSessionInPanel : undefined}
                   hasPendingPrompt={hasPendingPrompt}
                   activeChatMatchInfo={chatMatchInfo}
+                  onMenuOpenChange={handleFocusPeekContextMenuOpenChange}
                 />
               </>
             )}

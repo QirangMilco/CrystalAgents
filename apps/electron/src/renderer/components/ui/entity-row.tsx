@@ -78,6 +78,8 @@ export interface EntityRowProps {
   contextMenuContent?: React.ReactNode
   /** Whether to hide the more button (e.g. when overlay is showing) */
   hideMoreButton?: boolean
+  /** Called when the row dropdown or context menu opens/closes. */
+  onMenuOpenChange?: (open: boolean) => void
 
   // --- Passthrough ---
   /** Additional props spread onto the <button> (aria attrs, keyboard handlers, tabIndex, ref) */
@@ -109,6 +111,7 @@ export function EntityRow({
   menuContent,
   contextMenuContent,
   hideMoreButton = false,
+  onMenuOpenChange,
   buttonProps,
   dataAttributes,
   className,
@@ -116,6 +119,16 @@ export function EntityRow({
 }: EntityRowProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
+
+  const handleMenuOpenChange = React.useCallback((open: boolean) => {
+    setMenuOpen(open)
+    onMenuOpenChange?.(open)
+  }, [onMenuOpenChange])
+
+  const handleContextMenuOpenChange = React.useCallback((open: boolean) => {
+    setContextMenuOpen(open)
+    onMenuOpenChange?.(open)
+  }, [onMenuOpenChange])
 
   // Resolve context menu content: use override if provided, else fall back to dropdown menu content
   const resolvedContextMenu = contextMenuContent ?? menuContent
@@ -168,7 +181,7 @@ export function EntityRow({
                     )}
                     onMouseDown={(e) => e.stopPropagation()}
                   >
-                    <DropdownMenu modal={true} open={menuOpen} onOpenChange={setMenuOpen}>
+                    <DropdownMenu modal={true} open={menuOpen} onOpenChange={handleMenuOpenChange}>
                       <DropdownMenuTrigger asChild>
                         <div className="p-1 rounded-[6px] hover:bg-foreground/10 data-[state=open]:bg-foreground/10 cursor-pointer">
                           <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
@@ -258,7 +271,7 @@ export function EntityRow({
           onMouseDown={(e) => e.stopPropagation()}
         >
           <div className="flex items-center rounded-[8px] overflow-hidden border border-transparent hover:border-border/50">
-            <DropdownMenu modal={true} open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenu modal={true} open={menuOpen} onOpenChange={handleMenuOpenChange}>
               <DropdownMenuTrigger asChild>
                 <div className="p-1.5 hover:bg-foreground/10 data-[state=open]:bg-foreground/10 cursor-pointer">
                   <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
@@ -291,7 +304,7 @@ export function EntityRow({
 
       {/* Wrap with ContextMenu if menu content is provided */}
       {resolvedContextMenu ? (
-        <ContextMenu modal={true} onOpenChange={setContextMenuOpen}>
+        <ContextMenu modal={true} onOpenChange={handleContextMenuOpenChange}>
           <ContextMenuTrigger asChild>
             {innerContent}
           </ContextMenuTrigger>
