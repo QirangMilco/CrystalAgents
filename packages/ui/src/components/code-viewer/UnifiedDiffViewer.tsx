@@ -49,6 +49,8 @@ export interface UnifiedDiffViewerProps {
   /** Callback when the file header is clicked (e.g. to open the file in an editor).
    *  When provided, the header becomes clickable with cursor: pointer. */
   onFileHeaderClick?: (filePath: string) => void
+  /** Format collapsed unchanged-line labels shown between hunks. */
+  formatUnmodifiedLines?: (lines: number) => string
   /** Callback when ready */
   onReady?: () => void
   /** Additional class names */
@@ -101,6 +103,7 @@ export function UnifiedDiffViewer({
   disableBackground = false,
   disableFileHeader = true,
   onFileHeaderClick,
+  formatUnmodifiedLines,
   onReady,
   className,
 }: UnifiedDiffViewerProps) {
@@ -146,7 +149,7 @@ export function UnifiedDiffViewer({
     }
   }, [onReady, unifiedDiff, fileDiff])
 
-  // Attach a click listener to the file header inside pierre's shadow DOM.
+  // Attach listeners/patches inside pierre's shadow DOM.
   const containerRef = useRef<HTMLDivElement>(null)
   const onFileHeaderClickRef = useRef(onFileHeaderClick)
   onFileHeaderClickRef.current = onFileHeaderClick
@@ -177,6 +180,45 @@ export function UnifiedDiffViewer({
       }
     }
   }, [filePath, disableFileHeader, onFileHeaderClick])
+
+  useEffect(() => {
+    if (!formatUnmodifiedLines) return
+
+    let cancelled = false
+    const applyLabels = () => {
+      if (cancelled) return
+      const diffsContainer = containerRef.current?.querySelector(DIFFS_TAG_NAME)
+      const shadowRoot = diffsContainer?.shadowRoot
+      if (!shadowRoot) return
+
+      shadowRoot.querySelectorAll<HTMLElement>('[data-unmodified-lines]').forEach((element) => {
+        const rawText = element.textContent?.trim() ?? ''
+        const match = rawText.match(/^(\d+)\s+unmodified\s+lines?$/i)
+        if (!match) return
+        const lineCount = Number(match[1])
+        if (!Number.isFinite(lineCount)) return
+        element.setAttribute('data-craft-unmodified-label', formatUnmodifiedLines(lineCount))
+      })
+    }
+
+    const timer = setTimeout(applyLabels, 150)
+    const observer = new MutationObserver(applyLabels)
+    const observerTimer = setTimeout(() => {
+      if (cancelled) return
+      const diffsContainer = containerRef.current?.querySelector(DIFFS_TAG_NAME)
+      if (diffsContainer?.shadowRoot) {
+        observer.observe(diffsContainer.shadowRoot, { childList: true, subtree: true, characterData: true })
+        applyLabels()
+      }
+    }, 150)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+      clearTimeout(observerTimer)
+      observer.disconnect()
+    }
+  }, [formatUnmodifiedLines, unifiedDiff, fileDiff, diffStyle])
 
   // Use CSS variable so custom themes are respected
   const backgroundColor = 'var(--background)'

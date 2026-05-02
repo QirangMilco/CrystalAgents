@@ -211,6 +211,8 @@
   "changes.unstagedLabel": "Unstaged",
   "changes.untracked": "Untracked",
   "changes.untrackedLabel": "Untracked",
+  "changes.unmodifiedLines_one": "{{count}} unmodified line",
+  "changes.unmodifiedLines_other": "{{count}} unmodified lines",
   "chat.adminApprovalRequired": "管理者の承認が必要です",
   "chat.annotationPlaceholder": "次のターンでエージェントが考慮すべきコメントを追加...",
   "chat.attach": "添付",

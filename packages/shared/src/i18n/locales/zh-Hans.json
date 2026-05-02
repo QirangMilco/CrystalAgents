@@ -225,6 +225,8 @@
   "changes.unstagedLabel": "未暂存",
   "changes.untracked": "未跟踪",
   "changes.untrackedLabel": "未跟踪",
+  "changes.unmodifiedLines_one": "{{count}} 行未变更",
+  "changes.unmodifiedLines_other": "{{count}} 行未变更",
   "chat.adminApprovalRequired": "需要管理员审批",
   "chat.annotationPlaceholder": "添加备注供智能体在下一轮参考…",
   "chat.attach": "附加",

@@ -292,6 +292,7 @@ export function ChangesDetailPanel({ workspaceRootPath, filePath }: ChangesDetai
             diffStyle={diffViewerSettings.diffStyle ?? 'unified'}
             disableBackground={diffViewerSettings.disableBackground ?? false}
             disableFileHeader={false}
+            formatUnmodifiedLines={(lines) => t('changes.unmodifiedLines', { count: lines })}
             className="h-full"
           />
         </div>

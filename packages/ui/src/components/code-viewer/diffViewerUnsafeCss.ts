@@ -39,10 +39,29 @@ const STICKY_GUTTER_CSS = `
   z-index: 21;
 }
 
+[data-overflow="scroll"] [data-gutter] [data-separator="line-info"] [data-separator-wrapper] {
+  /*
+   * Pierre renders collapsed-context labels in both the sticky line-number
+   * gutter and the scrollable content column. The gutter copy is clipped to the
+   * line-number width, which leaves fragments like "123 unm" visible. Hide the
+   * gutter label and let the content copy render the full localized text.
+   */
+  display: none;
+}
+
 [data-overflow="scroll"] [data-content] {
   position: relative;
   z-index: 1;
   min-width: max-content;
+}
+
+[data-unmodified-lines][data-craft-unmodified-label] {
+  color: transparent;
+}
+
+[data-unmodified-lines][data-craft-unmodified-label]::before {
+  content: attr(data-craft-unmodified-label);
+  color: var(--diffs-fg-number);
 }
 
 [data-overflow="scroll"] [data-line] {

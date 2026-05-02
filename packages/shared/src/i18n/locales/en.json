@@ -225,6 +225,8 @@
   "changes.unstagedLabel": "Unstaged",
   "changes.untracked": "Untracked",
   "changes.untrackedLabel": "Untracked",
+  "changes.unmodifiedLines_one": "{{count}} unmodified line",
+  "changes.unmodifiedLines_other": "{{count}} unmodified lines",
   "chat.adminApprovalRequired": "Admin approval required",
   "chat.annotationPlaceholder": "Add comments the agent should consider in the next turn…",
   "chat.attach": "Attach",

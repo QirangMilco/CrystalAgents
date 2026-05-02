@@ -211,6 +211,8 @@
   "changes.unstagedLabel": "Unstaged",
   "changes.untracked": "Untracked",
   "changes.untrackedLabel": "Untracked",
+  "changes.unmodifiedLines_one": "{{count}} unmodified line",
+  "changes.unmodifiedLines_other": "{{count}} unmodified lines",
   "chat.adminApprovalRequired": "Administratorgenehmigung erforderlich",
   "chat.annotationPlaceholder": "Kommentare hinzufügen, die der Agent im nächsten Schritt berücksichtigen soll…",
   "chat.attach": "Anhängen",
