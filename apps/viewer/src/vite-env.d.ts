@@ -5,7 +5,7 @@ declare module '*.mjs?url' {
   export default src
 }
 
-declare module 'pdfjs-dist/build/pdf.worker.min.mjs?url' {
+declare module 'pdfjs-dist/build/pdf.worker.mjs?url' {
   const workerUrl: string
   export default workerUrl
 }

@@ -9,7 +9,7 @@ import { describe, it, expect, mock, beforeAll } from 'bun:test';
 
 // mention-menu.tsx transitively imports pdfjs-dist via renderer component chain.
 // Vite's ?url suffix isn't supported by bun — mock before dynamic import.
-mock.module('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '' }));
+mock.module('pdfjs-dist/build/pdf.worker.mjs?url', () => ({ default: '' }));
 mock.module('pdfjs-dist', () => ({ GlobalWorkerOptions: { workerSrc: '' }, getDocument: () => ({}) }));
 
 let isValidMentionTrigger: (text: string, position: number) => boolean;
