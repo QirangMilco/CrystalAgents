@@ -235,7 +235,6 @@ function buildCustomModelsForRuntime(connection: Parameters<ProviderDriver['buil
     ? connection.models
     : [connection?.defaultModel, connection?.miniModel].filter((model): model is string => !!model);
   if (!configuredModels.length) return undefined;
-  const fallbackContextWindow = connection?.contextWindow ?? (connection?.customEndpoint ? DEFAULT_CUSTOM_ENDPOINT_CONTEXT_WINDOW : undefined);
 
   const providerModels = connection?.piAuthProvider
     ? getPiModelsForAuthProvider(connection.piAuthProvider)
@@ -252,7 +251,14 @@ function buildCustomModelsForRuntime(connection: Parameters<ProviderDriver['buil
     const supportsImages = typeof m === 'object' && 'supportsImages' in m && m.supportsImages === true;
     const explicitContextWindow = typeof m === 'object' ? m.contextWindow : undefined;
     const providerContextWindow = providerModelById.get(id)?.contextWindow;
-    const contextWindow = explicitContextWindow ?? providerContextWindow ?? fallbackContextWindow;
+    // Priority:
+    // 1. User's connection-level contextWindow (if explicitly set)
+    // 2. Per-model explicit contextWindow (from connection.models)
+    // 3. Provider registry default
+    // 4. DEFAULT_CUSTOM_ENDPOINT_CONTEXT_WINDOW (131072) as ultimate fallback
+    const connectionOverride = connection?.contextWindow
+    const contextWindow = connectionOverride ?? explicitContextWindow ?? providerContextWindow
+      ?? (connection?.customEndpoint ? DEFAULT_CUSTOM_ENDPOINT_CONTEXT_WINDOW : undefined);
 
     if (contextWindow || supportsImages) {
       return {

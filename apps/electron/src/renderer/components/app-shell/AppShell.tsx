@@ -38,6 +38,7 @@ import {
   CircleX,
   AlertCircle,
   GitCompare,
+  MailOpen,
 } from "lucide-react"
 // SessionStatusIcons no longer used - icons come from dynamic sessionStatuses
 import { SourceAvatar } from "@/components/ui/source-avatar"
@@ -3384,129 +3385,34 @@ function AppShellContent({
                                     <span className="flex-1">{t("sidebar.statuses")}</span>
                                   </StyledDropdownMenuSubTrigger>
                                   <StyledDropdownMenuSubContent minWidth="min-w-[180px]">
-                                    {effectiveSessionStatuses.map(state => {
-                                      const applyColor = state.iconColorable
-                                      const isPinned = state.id === pinnedFilters.pinnedStatusId
-                                      const currentMode = listFilter.get(state.id)
-                                      const isActive = !!currentMode && !isPinned
-                                      if (isActive) {
-                                        return (
-                                          <DropdownMenuSub key={state.id}>
-                                            <StyledDropdownMenuSubTrigger onClick={(e) => { e.preventDefault(); setListFilter(prev => { const next = new Map(prev); next.delete(state.id); return next }) }}>
-                                              <FilterMenuRow
-                                                icon={state.icon}
-                                                label={state.label}
-                                                accessory={<FilterModeBadge mode={currentMode} />}
-                                                iconStyle={applyColor ? { color: state.resolvedColor } : undefined}
-                                                noIconContainer
-                                              />
-                                            </StyledDropdownMenuSubTrigger>
-                                            <StyledDropdownMenuSubContent minWidth="min-w-[140px]">
-                                              <FilterModeSubMenuItems
-                                                mode={currentMode}
-                                                onChangeMode={(newMode) => setListFilter(prev => {
-                                                  const next = new Map(prev)
-                                                  next.set(state.id, newMode)
-                                                  return next
-                                                })}
-                                                onRemove={() => setListFilter(prev => {
-                                                  const next = new Map(prev)
-                                                  next.delete(state.id)
-                                                  return next
-                                                })}
-                                              />
-                                            </StyledDropdownMenuSubContent>
-                                          </DropdownMenuSub>
-                                        )
-                                      }
-                                      return (
-                                        <AltExcludeTooltip key={state.id} show={filterAltHeld && !isPinned}>
-                                          <StyledDropdownMenuItem
-                                            disabled={isPinned}
-                                            onClick={(e) => {
-                                              if (isPinned) return
-                                              e.preventDefault()
-                                              setListFilter(prev => {
-                                                const next = new Map(prev)
-                                                if (next.has(state.id)) next.delete(state.id)
-                                                else next.set(state.id, e.altKey ? 'exclude' : 'include')
-                                                return next
-                                              })
-                                            }}
-                                          >
-                                            <FilterMenuRow
-                                              icon={state.icon}
-                                              label={state.label}
-                                              accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : null}
-                                              iconStyle={applyColor ? { color: state.resolvedColor } : undefined}
-                                              noIconContainer
-                                            />
-                                          </StyledDropdownMenuItem>
-                                        </AltExcludeTooltip>
-                                      )
-                                    })}
+                                    <StyledDropdownMenuItem onClick={() => setChatGroupingMode('date')}>
+                                      <Calendar className="h-3.5 w-3.5" />
+                                      <span className="flex-1">{t("sidebar.groupByDate")}</span>
+                                      {chatGroupingMode === 'date' && <Check className="h-3 w-3 text-muted-foreground" />}
+                                    </StyledDropdownMenuItem>
+                                    <StyledDropdownMenuItem onClick={() => setChatGroupingMode('status')}>
+                                      <Inbox className="h-3.5 w-3.5" />
+                                      <span className="flex-1">{t("sidebar.groupByStatus")}</span>
+                                      {chatGroupingMode === 'status' && <Check className="h-3 w-3 text-muted-foreground" />}
+                                    </StyledDropdownMenuItem>
+                                    <StyledDropdownMenuItem onClick={() => setChatGroupingMode('unread')}>
+                                      <MailOpen className="h-3.5 w-3.5" />
+                                      <span className="flex-1">{t("sidebar.groupByUnread")}</span>
+                                      {chatGroupingMode === 'unread' && <Check className="h-3 w-3 text-muted-foreground" />}
+                                    </StyledDropdownMenuItem>
                                   </StyledDropdownMenuSubContent>
                                 </DropdownMenuSub>
-
-                                {/* Labels submenu - hierarchical tree with recursive submenus */}
-                                <DropdownMenuSub>
-                                  <StyledDropdownMenuSubTrigger>
-                                    <Tag className="h-3.5 w-3.5" />
-                                    <span className="flex-1">{t("sidebar.labels")}</span>
-                                  </StyledDropdownMenuSubTrigger>
-                                  <StyledDropdownMenuSubContent minWidth="min-w-[180px]">
-                                    {labelConfigs.length === 0 ? (
-                                      <StyledDropdownMenuItem disabled>
-                                        <span className="text-muted-foreground">{t("table.noLabelsConfigured")}</span>
-                                      </StyledDropdownMenuItem>
-                                    ) : (
-                                      <FilterLabelItems
-                                        labels={displayLabelConfigs}
-                                        labelFilter={labelFilter}
-                                        setLabelFilter={setLabelFilter}
-                                        pinnedLabelId={pinnedFilters.pinnedLabelId}
-                                        altHeld={filterAltHeld}
-                                      />
-                                    )}
-                                  </StyledDropdownMenuSubContent>
-                                </DropdownMenuSub>
-
-                                {/* Group by submenu - hidden in state sub-views (always date there) */}
-                                {!isStateSubView && (
-                                  <>
-                                    <StyledDropdownMenuSeparator />
-                                    <DropdownMenuSub>
-                                      <StyledDropdownMenuSubTrigger>
-                                        <Layers className="h-3.5 w-3.5" />
-                                        <span className="flex-1">{t("sidebar.group")}</span>
-                                      </StyledDropdownMenuSubTrigger>
-                                      <StyledDropdownMenuSubContent minWidth="min-w-[140px]">
-                                        <StyledDropdownMenuItem onClick={() => setChatGroupingMode('date')}>
-                                          <Calendar className="h-3.5 w-3.5" />
-                                          <span className="flex-1">{t("sidebar.groupByDate")}</span>
-                                          {chatGroupingMode === 'date' && <Check className="h-3 w-3 text-muted-foreground" />}
-                                        </StyledDropdownMenuItem>
-                                        <StyledDropdownMenuItem onClick={() => setChatGroupingMode('status')}>
-                                          <Inbox className="h-3.5 w-3.5" />
-                                          <span className="flex-1">{t("sidebar.groupByStatus")}</span>
-                                          {chatGroupingMode === 'status' && <Check className="h-3 w-3 text-muted-foreground" />}
-                                        </StyledDropdownMenuItem>
-                                      </StyledDropdownMenuSubContent>
-                                    </DropdownMenuSub>
-                                  </>
-                                )}
-
-                                <StyledDropdownMenuSeparator />
-                                <StyledDropdownMenuItem
-                                  onClick={() => {
-                                    setSearchActive(true)
-                                  }}
-                                >
-                                  <Search className="h-3.5 w-3.5" />
-                                  <span className="flex-1">{t("sidebar.search")}</span>
-                                </StyledDropdownMenuItem>
-                              </>
-                            ) : (
+                              <StyledDropdownMenuSeparator />
+                              <StyledDropdownMenuItem
+                                onClick={() => {
+                                  setSearchActive(true)
+                                }}
+                              >
+                                <Search className="h-3.5 w-3.5" />
+                                <span className="flex-1">{t("sidebar.search")}</span>
+                              </StyledDropdownMenuItem>
+                            </>
+                          ) : (
                               <>
                                 {/* === FLAT FILTERED MODE (has query) === */}
                                 {filterDropdownResults.states.length === 0 && filterDropdownResults.labels.length === 0 ? (

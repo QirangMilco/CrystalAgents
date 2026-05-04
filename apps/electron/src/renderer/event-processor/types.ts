@@ -227,6 +227,8 @@ export interface InfoEvent {
   level?: 'info' | 'warning' | 'error' | 'success'
   /** Timestamp from main process for consistent ordering */
   timestamp?: number
+  /** Token count before compaction (only set for compaction_complete events) */
+  tokensBefore?: number
 }
 
 /**

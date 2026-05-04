@@ -431,7 +431,11 @@ export class PiEventAdapter extends BaseEventAdapter {
         const compactionEvent = event as Extract<AgentSessionEvent, { type: 'compaction_end' }>;
         if (compactionEvent.result && !compactionEvent.aborted) {
           // Use "Compacted" keyword so session handler detects statusType: 'compaction_complete'
-          yield { type: 'info', message: 'Compacted context to fit within limits' };
+          const tokensBefore = (compactionEvent.result as { tokensBefore?: number } | undefined)?.tokensBefore
+          const message = tokensBefore != null
+            ? `Compacted context to fit within limits (from ~${tokensBefore.toLocaleString()} tokens)`
+            : 'Compacted context to fit within limits'
+          yield { type: 'info', message, tokensBefore };
         } else if (compactionEvent.errorMessage) {
           yield { type: 'error', message: `Context compaction failed: ${compactionEvent.errorMessage}` };
         }

@@ -190,27 +190,30 @@ try {
     Pop-Location
 }
 
-# 5. Copy SDK from root node_modules (monorepo hoisting)
+# 5. Copy SDK from root node_modules (monorepo hoisting).
+# Since SDK 0.2.113: thin core + per-platform binary package.
+# See apps/electron/scripts/build-dmg.sh for the full rationale.
 $SdkSource = "$RootDir\node_modules\@anthropic-ai\claude-agent-sdk"
 if (-not (Test-Path $SdkSource)) {
-    Write-Host "ERROR: SDK not found at $SdkSource" -ForegroundColor Red
+    Write-Host "ERROR: SDK core not found at $SdkSource" -ForegroundColor Red
     Write-Host "Run 'bun install' from the repository root first."
     exit 1
 }
-Write-Host "Copying SDK..."
+Write-Host "Copying SDK core..."
 New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@anthropic-ai" | Out-Null
+Remove-Item -Recurse -Force "$ElectronDir\node_modules\@anthropic-ai\claude-agent-sdk" -ErrorAction SilentlyContinue
 Copy-Item -Recurse -Force $SdkSource "$ElectronDir\node_modules\@anthropic-ai\"
 
-# 6. Copy interceptor
+# 6. Copy network interceptor sources (for Pi subprocess; Claude no longer
+#    uses --preload — see Phase 2 in plans/sdk-uplift-plan.md).
 $InterceptorSource = "$RootDir\packages\shared\src\unified-network-interceptor.ts"
 if (-not (Test-Path $InterceptorSource)) {
     Write-Host "ERROR: Interceptor not found at $InterceptorSource" -ForegroundColor Red
     exit 1
 }
-Write-Host "Copying interceptor..."
+Write-Host "Copying interceptor (for Pi subprocess)..."
 New-Item -ItemType Directory -Force -Path "$ElectronDir\packages\shared\src" | Out-Null
 Copy-Item $InterceptorSource "$ElectronDir\packages\shared\src\"
-# Also copy dependencies imported by the interceptor at runtime
 foreach ($dep in @("interceptor-common.ts", "feature-flags.ts", "interceptor-request-utils.ts")) {
     $depPath = "$RootDir\packages\shared\src\$dep"
     if (Test-Path $depPath) {

@@ -1,5 +1,5 @@
 import type { EventSink } from '@craft-agent/server-core/transport'
-import type { ISessionManager, IBrowserPaneManager } from '@craft-agent/server-core/handlers'
+import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput } from '@craft-agent/server-core/handlers'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, join } from 'path'
@@ -1061,6 +1061,19 @@ export class SessionManager implements ISessionManager {
   private lastTimestamp = 0
 
   /**
+   * Optional binder installed by the messaging-gateway bootstrap. When set,
+   * `executePromptAutomation` calls it after creating a session whose matcher
+   * declared `telegramTopic`, so the new session is bound to a Telegram forum
+   * topic in the workspace's paired supergroup. Best-effort — failures must
+   * not block the session.
+   */
+  private automationBinder?: (input: {
+    workspaceId: string
+    sessionId: string
+    topicName: string
+  }) => Promise<void>
+
+  /**
    * Centralized setter for session processing state.
    * Automatically notifies the power manager on transitions (true→false, false→true)
    * so callers don't need to remember to call onSessionStarted/onSessionStopped.
@@ -1079,6 +1092,17 @@ export class SessionManager implements ISessionManager {
    *  Resolves immediately if already initialized. */
   waitForInit(): Promise<void> {
     return this.initGate.wait()
+  }
+
+  /**
+   * Install the automation→topic binder. Wired by the messaging-gateway
+   * bootstrap so SessionManager doesn't need to import the messaging
+   * package (avoids a package-level circular dependency).
+   */
+  setAutomationBinder(
+    fn: (input: { workspaceId: string; sessionId: string; topicName: string }) => Promise<void>,
+  ): void {
+    this.automationBinder = fn
   }
 
   private browserPaneManager: IBrowserPaneManager | null = null
@@ -1375,17 +1399,19 @@ export class SessionManager implements ISessionManager {
           // Execute prompt automations by creating new sessions
           const settled = await Promise.allSettled(
             prompts.map((pending) =>
-              this.executePromptAutomation(
+              this.executePromptAutomation({
                 workspaceId,
                 workspaceRootPath,
-                pending.prompt,
-                pending.labels,
-                pending.permissionMode,
-                pending.mentions,
-                pending.llmConnection,
-                pending.model,
-                pending.automationName,
-              )
+                prompt: pending.prompt,
+                labels: pending.labels,
+                permissionMode: pending.permissionMode,
+                mentions: pending.mentions,
+                llmConnection: pending.llmConnection,
+                model: pending.model,
+                thinkingLevel: pending.thinkingLevel,
+                automationName: pending.automationName,
+                telegramTopic: pending.telegramTopic,
+              })
             )
           )
 
@@ -4855,7 +4881,23 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`Deleted session ${sessionId}`)
   }
 
-  async sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachment[], options?: SendMessageOptions, existingMessageId?: string, _isAuthRetry?: boolean): Promise<void> {
+  async sendMessage(
+    sessionId: string,
+    message: string,
+    attachments?: FileAttachment[],
+    storedAttachments?: StoredAttachment[],
+    options?: SendMessageOptions,
+    existingMessageId?: string,
+    _isAuthRetry?: boolean,
+    /**
+     * Internal hook fired after the user message has been pushed to
+     * `managed.messages` and persisted to disk, but before the model-streaming
+     * work begins. The RPC handler uses this to send a synchronous "accepted"
+     * ack to the client so a crash mid-stream doesn't lose the user message
+     * (#616). Pre-persist errors still reject the outer promise as before.
+     */
+    onAck?: (messageId: string) => void,
+  ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
@@ -4876,7 +4918,12 @@ export class SessionManager implements ISessionManager {
       const agent = managed.agent
       const steered = agent?.redirect(message) ?? false
 
-      sessionLog.info(`Session ${sessionId} ${steered ? 'redirected mid-stream (steer)' : 'aborting to queue message'}`)
+      sessionLog.info('mid-stream send', {
+        sessionId,
+        steered,
+        queueLengthBefore: managed.messageQueue.length,
+        backend: agent ? agent.constructor.name : 'none',
+      })
 
       // Create user message for UI
       const userMessage: Message = {
@@ -4906,6 +4953,11 @@ export class SessionManager implements ISessionManager {
       }
 
       this.persistSession(managed)
+      // Force a synchronous flush so the user message is genuinely on disk
+      // before we tell the renderer "accepted" — `persistSession` only
+      // enqueues with a 500ms debounce. (#616 reliability fix.)
+      await this.flushSession(managed.id)
+      onAck?.(userMessage.id)
       return
     }
 
@@ -4932,6 +4984,13 @@ export class SessionManager implements ISessionManager {
 
       // Update lastMessageRole for badge display
       managed.lastMessageRole = 'user'
+
+      // Persist + flush before announcing — the user message must be
+      // genuinely on disk before we tell the renderer "accepted", and
+      // `persistSession` is debounced (500ms). #616.
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+      onAck?.(userMessage.id)
 
       // Emit user_message event so UI can confirm the optimistic message
       this.sendEvent({
@@ -5203,6 +5262,11 @@ export class SessionManager implements ISessionManager {
         // Process the event first
         await this.processEvent(managed, event)
 
+        // [compaction-debug] Post processEvent - log info/status events
+        if (process.env.CRAFT_DEBUG_COMPACTION === '1' && (event.type === 'info' || event.type === 'status')) {
+          sessionLog.info(`[compaction-debug] post-processEvent type=${event.type} message=${(event as any).message ?? 'na'} managed.messages.length=${managed.messages.length}`)
+        }
+
         // Fallback: Capture SDK session ID if the onSdkSessionIdUpdate callback didn't fire.
         // Primary capture happens in getOrCreateAgent() via onSdkSessionIdUpdate callback,
         // which immediately flushes to disk. This fallback handles edge cases where the
@@ -5295,6 +5359,10 @@ export class SessionManager implements ISessionManager {
             }
           }
 
+          // Pull any pending compaction info from the PiAgent (bypasses
+          // eventQueue microtask scheduling loss during auto-compaction).
+          this.consumeAgentCompactionInfo(managed, sessionId)
+
           sendSpan.mark('chat.complete')
           sendSpan.end()
           this.onProcessingStopped(sessionId, 'complete')
@@ -5306,6 +5374,10 @@ export class SessionManager implements ISessionManager {
         // the generator to yield remaining queued events and then complete naturally.
         // This ensures we don't lose in-flight messages.
       }
+
+      // Pull any pending compaction info from the PiAgent (bypasses
+      // eventQueue microtask scheduling loss during auto-compaction).
+      this.consumeAgentCompactionInfo(managed, sessionId)
 
       // Loop exited - either via complete event (normal) or generator ended after soft interrupt
       if (!managed.isProcessing) {
@@ -5647,7 +5719,11 @@ export class SessionManager implements ISessionManager {
     if (!managed || managed.messageQueue.length === 0) return
 
     const next = managed.messageQueue.shift()!
-    sessionLog.info(`Processing queued message for session ${sessionId}`)
+    sessionLog.info('replay queued', {
+      sessionId,
+      messageId: next.messageId,
+      queueLengthAfterShift: managed.messageQueue.length,
+    })
 
     // Update UI: queued → processing
     if (next.messageId) {
@@ -5677,13 +5753,26 @@ export class SessionManager implements ISessionManager {
         next.options,
         next.messageId
       ).catch(err => {
-        sessionLog.error('Error processing queued message:', err)
+        sessionLog.error('replay failed', {
+          sessionId,
+          messageId: next.messageId,
+          error: err instanceof Error ? err.message : String(err),
+        })
         // Report queued message failures via runtime hooks
         sessionRuntimeHooks.captureException(err, { errorSource: 'chat-queue', sessionId })
+        // Surface a typed error so the UI can show a clear, actionable banner
+        // instead of a generic "Unknown error" (#616).
         this.sendEvent({
-          type: 'error',
+          type: 'typed_error',
           sessionId,
-          error: err instanceof Error ? err.message : 'Unknown error'
+          error: {
+            code: 'queued_message_replay_failed',
+            title: 'Queued message could not be sent',
+            message: 'A message you sent while the agent was running could not be re-sent automatically. Tap retry to send it now.',
+            actions: [{ key: 'r', label: 'Retry', action: 'retry' }],
+            canRetry: true,
+            originalError: err instanceof Error ? err.message : String(err),
+          },
         }, managed.workspace.id)
         // Call onProcessingStopped to handle cleanup and check for more queued messages
         this.onProcessingStopped(sessionId, 'error')
@@ -6135,6 +6224,50 @@ export class SessionManager implements ISessionManager {
     }
   }
 
+  /**
+   * Pull pending compaction info from the agent (PiAgent bypass).
+   * The eventQueue microtask scheduling can lose compaction info events,
+   * so we check directly after the chat completes.
+   */
+  private consumeAgentCompactionInfo(managed: ManagedSession, sessionId: string): void {
+    const agent = managed.agent
+    if (!agent) {
+      sessionLog.info(`[compaction-debug] consumeAgentCompactionInfo: no agent (skipped)`)
+      return
+    }
+    const consumeFn = (agent as any).consumePendingCompactionInfo
+    if (typeof consumeFn !== 'function') {
+      sessionLog.info(`[compaction-debug] consumeAgentCompactionInfo: agent has no consumePendingCompactionInfo method (type=${agent.constructor?.name ?? 'unknown'})`)
+      return
+    }
+    const info = consumeFn()
+    if (!info) {
+      sessionLog.info(`[compaction-debug] consumeAgentCompactionInfo: no pending info (agent=${agent.constructor?.name})`)
+      return
+    }
+
+    const compactionMessage: Message = {
+      id: generateMessageId(),
+      role: 'info',
+      content: info.message,
+      timestamp: this.monotonic(),
+      statusType: 'compaction_complete',
+      tokensBefore: info.tokensBefore,
+    }
+    managed.messages.push(compactionMessage)
+    sessionLog.info(`[compaction-debug] consumeAgentCompactionInfo: pushed message id=${compactionMessage.id} message=${info.message} tokensBefore=${info.tokensBefore ?? 'na'} managed.messages.length=${managed.messages.length}`)
+
+    this.sendEvent({
+      type: 'info',
+      sessionId,
+      message: info.message,
+      statusType: 'compaction_complete',
+      timestamp: this.monotonic(),
+      tokensBefore: info.tokensBefore,
+    }, managed.workspace.id)
+    sessionLog.info(`Session ${sessionId}: compaction info pulled from agent (bypass), sent to frontend`)
+  }
+
   private async processEvent(managed: ManagedSession, event: AgentEvent): Promise<void> {
     const sessionId = managed.id
     const workspaceId = managed.workspace.id
@@ -6450,18 +6583,27 @@ export class SessionManager implements ISessionManager {
         break
       }
 
-      case 'status':
+      case 'status': {
+        const compactingStatusType = event.message.includes('Compacting') ? 'compacting' : undefined
+        if (process.env.CRAFT_DEBUG_COMPACTION === '1' && compactingStatusType) {
+          sessionLog.info(`[compaction-debug] processEvent case=status message=${event.message} statusType=${compactingStatusType} sending to renderer`)
+        }
         this.sendEvent({
           type: 'status',
           sessionId,
           message: event.message,
-          statusType: event.message.includes('Compacting') ? 'compacting' : undefined
+          statusType: compactingStatusType,
         }, workspaceId)
         break
+      }
 
       case 'info': {
         const isCompactionComplete = event.message.startsWith('Compacted')
         const infoTimestamp = this.monotonic()
+
+        if (process.env.CRAFT_DEBUG_COMPACTION === '1') {
+          sessionLog.info(`[compaction-debug] processEvent case=info message=${event.message} isCompactionComplete=${isCompactionComplete ? 1 : 0} tokensBefore=${(event as { tokensBefore?: number }).tokensBefore ?? 'na'}`)
+        }
 
         // Persist compaction messages so they survive reload
         // Other info messages are transient (just sent to renderer)
@@ -6472,8 +6614,12 @@ export class SessionManager implements ISessionManager {
             content: event.message,
             timestamp: infoTimestamp,
             statusType: 'compaction_complete',
+            tokensBefore: (event as { tokensBefore?: number }).tokensBefore,
           }
           managed.messages.push(compactionMessage)
+          if (process.env.CRAFT_DEBUG_COMPACTION === '1') {
+            sessionLog.info(`[compaction-debug] processEvent pushed compaction message id=${compactionMessage.id} managed.messages.length=${managed.messages.length}`)
+          }
 
           // Mark compaction complete in the session state.
           // This is done here (backend) rather than in the renderer so it's
@@ -6496,12 +6642,16 @@ export class SessionManager implements ISessionManager {
           }
         }
 
+        if (process.env.CRAFT_DEBUG_COMPACTION === '1' && isCompactionComplete) {
+          sessionLog.info(`[compaction-debug] sendEvent info type=info statusType=compaction_complete message=${event.message} tokensBefore=${(event as { tokensBefore?: number }).tokensBefore ?? 'na'}`)
+        }
         this.sendEvent({
           type: 'info',
           sessionId,
           message: event.message,
           statusType: isCompactionComplete ? 'compaction_complete' : undefined,
           timestamp: infoTimestamp,
+          tokensBefore: isCompactionComplete ? (event as { tokensBefore?: number }).tokensBefore : undefined,
         }, workspaceId)
         break
       }
@@ -6867,19 +7017,30 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Execute a prompt automation by creating a new session and sending the prompt
+   * Execute a prompt automation by creating a new session and sending the prompt.
+   *
+   * The options-object form replaced the previous positional-args signature
+   * once the param list outgrew readability — `thinkingLevel` was the trigger.
+   * When `thinkingLevel` is omitted, `createSession` falls back to the
+   * workspace default (then DEFAULT_THINKING_LEVEL).
    */
   async executePromptAutomation(
-    workspaceId: string,
-    workspaceRootPath: string,
-    prompt: string,
-    labels?: string[],
-    permissionMode?: PermissionMode,
-    mentions?: string[],
-    llmConnection?: string,
-    model?: string,
-    automationName?: string,
+    input: ExecutePromptAutomationInput,
   ): Promise<{ sessionId: string }> {
+    const {
+      workspaceId,
+      workspaceRootPath,
+      prompt,
+      labels,
+      permissionMode,
+      mentions,
+      llmConnection,
+      model,
+      thinkingLevel,
+      automationName,
+      telegramTopic,
+    } = input
+
     // Warn if llmConnection was specified but doesn't resolve
     if (llmConnection) {
       const connection = resolveSessionConnection(llmConnection)
@@ -6908,6 +7069,7 @@ export class SessionManager implements ISessionManager {
       enabledSourceSlugs: resolved?.sourceSlugs,
       llmConnection,
       model,
+      thinkingLevel,
     })
 
     // Populate triggeredBy metadata so title generation is explicitly skipped
@@ -6922,6 +7084,26 @@ export class SessionManager implements ISessionManager {
     // before streaming events arrive. Without this, the renderer may create
     // a synthetic empty session and temporarily show "New chat".
     this.sendEvent({ type: 'session_created', sessionId: session.id }, workspaceId)
+
+    // Bind the new session to its Telegram forum topic if the matcher
+    // declared `telegramTopic`. Done before `sendMessage` so the first
+    // assistant tokens already route through the bound topic. Failure
+    // is logged inside the binder; the session continues unbound.
+    if (this.automationBinder && telegramTopic && telegramTopic.trim().length > 0) {
+      try {
+        await this.automationBinder({
+          workspaceId,
+          sessionId: session.id,
+          topicName: telegramTopic.trim(),
+        })
+      } catch (err) {
+        sessionLog.warn('[Automations] automation binder threw', {
+          sessionId: session.id,
+          telegramTopic,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
 
     // Send the prompt
     await this.sendMessage(session.id, prompt, undefined, undefined, {

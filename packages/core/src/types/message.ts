@@ -291,6 +291,8 @@ export interface Message {
   turnId?: string;
   // Status type for special status messages (e.g., compacting)
   statusType?: 'compacting' | 'compaction_complete' | 'session_transfer_summary';
+  // Token count before compaction (only set for compaction_complete messages)
+  tokensBefore?: number;
   // Info level for info messages (determines icon/color)
   infoLevel?: 'info' | 'warning' | 'error' | 'success';
   // Error-specific fields (for typed errors with diagnostics)
@@ -372,6 +374,8 @@ export interface StoredMessage {
   statusType?: 'compacting' | 'compaction_complete' | 'session_transfer_summary';
   // Info level for info messages (persisted for reload)
   infoLevel?: 'info' | 'warning' | 'error' | 'success';
+  // Token count before compaction (only set for compaction_complete messages)
+  tokensBefore?: number;
   // Error display fields
   errorCode?: string;
   errorTitle?: string;
@@ -466,6 +470,7 @@ export type ErrorCode =
   | 'invalid_request'        // API rejected the request (e.g., bad image, invalid content)
   | 'image_too_large'        // Image exceeds API dimension/size limits
   | 'provider_error'         // AI provider experiencing issues (overloaded, unavailable)
+  | 'queued_message_replay_failed'  // A message queued during an active turn could not be auto-replayed (#616)
   | 'unknown_error';
 
 /**
@@ -541,7 +546,7 @@ export interface AgentEventUsage {
  */
 export type AgentEvent =
   | { type: 'status'; message: string }
-  | { type: 'info'; message: string }
+  | { type: 'info'; message: string; tokensBefore?: number }
   | { type: 'text_delta'; text: string; turnId?: string; parentToolUseId?: string }
   | { type: 'text_complete'; text: string; isIntermediate?: boolean; turnId?: string; parentToolUseId?: string; sdkTurnAnchor?: string }
   | { type: 'tool_start'; toolName: string; toolUseId: string; input: Record<string, unknown>; intent?: string; displayName?: string; turnId?: string; parentToolUseId?: string; toolDisplayMeta?: ToolDisplayMeta }

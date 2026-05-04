@@ -363,6 +363,17 @@ export class PiAgent extends BaseAgent {
     reject: (error: Error) => void;
   }> = new Map();
 
+  // Compaction event tracking: the Pi SDK emits agent_end BEFORE auto-compaction events
+  // (compaction_start, compaction_end). We delay eventQueue.complete() so compaction
+  // events don't get enqueued into a dead queue.
+  private _compactionGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  private _compactionInProgress = false;
+
+  // Bypass: eventQueue microtask scheduling can swallow compaction info events.
+  // When compaction_end arrives, we store the info here and yield it from chatImpl
+  // AFTER the drain loop exits, ensuring the SessionManager receives it.
+  private _pendingCompactionInfo: { message: string; tokensBefore?: number } | null = null;
+
   // Metadata captured before PreToolUse stripping, keyed by toolCallId.
   // This provides a deterministic bridge when side-channel metadata store misses.
   private preToolMetadataByCallId: Map<string, {
@@ -655,13 +666,23 @@ export class PiAgent extends BaseAgent {
     await this.subprocessReady;
     this.debug('Pi subprocess is ready');
 
-    // Ensure auto-compaction is explicitly enabled for embedded sessions.
-    // PI defaults this to enabled, but we set it proactively for clarity and resilience.
-    try {
-      const enabled = await this.requestSetAutoCompaction(true);
-      this.debug(`PI auto-compaction enabled: ${enabled}`);
-    } catch (error) {
-      this.debug(`Failed to configure PI auto-compaction (continuing): ${error instanceof Error ? error.message : String(error)}`);
+    // Disable auto-compaction for custom endpoints. The Pi SDK's
+    // _runAutoCompaction can leave the subprocess in a broken state,
+    // causing subsequent prompts to hang. Users can manually compact
+    // via the /compact command or the red percentage button.
+    const isCustomEndpoint = !!(this.config.runtime as any)?.customEndpoint
+    if (isCustomEndpoint) {
+      this.debug('PI auto-compaction DISABLED (custom endpoint - use /compact manually)')
+      await this.requestSetAutoCompaction(false).catch(() => {})
+    } else {
+      // Ensure auto-compaction is explicitly enabled for embedded sessions.
+      // PI defaults this to enabled, but we set it proactively for clarity.
+      try {
+        const enabled = await this.requestSetAutoCompaction(true);
+        this.debug(`PI auto-compaction enabled: ${enabled}`);
+      } catch (error) {
+        this.debug(`Failed to configure PI auto-compaction (continuing): ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
     // Register session-scoped tools as proxy tools in the subprocess.
@@ -1172,6 +1193,10 @@ export class PiAgent extends BaseAgent {
     // The subprocess sends Pi SDK AgentSessionEvent objects serialized as JSON.
     // Feed them through PiEventAdapter to convert to Craft AgentEvents.
 
+    // Track compaction events that need deferred handling after the adapter loop
+    let shouldCompleteAfterAdapt = false
+    let shouldStartAgentEndTimer = false
+
     // Detect session MCP tool completions (same pattern as in-process version)
     const eventType = event.type as string;
     let adaptedEvent = event;
@@ -1223,10 +1248,47 @@ export class PiAgent extends BaseAgent {
       }
     }
 
+    // [compaction-debug] Log raw subprocess event for compaction
+    if (process.env.CRAFT_DEBUG_COMPACTION === '1' && (eventType === 'compaction_start' || eventType === 'compaction_end')) {
+      const compactionResult = (event as Record<string, unknown>).result as Record<string, unknown> | undefined
+      this.debug(`[compaction-debug] handleSubprocessEvent raw event type=${eventType} aborted=${String((event as Record<string, unknown>).aborted)} tokensBefore=${compactionResult?.tokensBefore ?? 'na'} hasResult=${compactionResult ? 1 : 0}`)
+    }
+
+    // Track compaction events BEFORE the adapter loop so state flags are set
+    // before adapted events (status/info) are enqueued. But we defer
+    // eventQueue.complete() until AFTER the adapter loop so compaction
+    // events are already in the queue when we close it.
+    if (eventType === 'agent_end') {
+      shouldStartAgentEndTimer = true
+    }
+    if (eventType === 'compaction_start') {
+      this._compactionInProgress = true
+      if (this._compactionGraceTimer) {
+        clearTimeout(this._compactionGraceTimer)
+        this._compactionGraceTimer = null
+      }
+    }
+    if (eventType === 'compaction_end') {
+      shouldCompleteAfterAdapt = true
+      this._compactionInProgress = false
+      if (this._compactionGraceTimer) {
+        clearTimeout(this._compactionGraceTimer)
+        this._compactionGraceTimer = null
+      }
+    }
+
     // Adapt event to CraftAgentEvents
     // The event adapter expects typed PiAgentEvent/AgentSessionEvent objects,
     // but since we're receiving plain JSON, we cast through unknown.
     for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
+      // [compaction-debug] Log adapted events for compaction
+      if (process.env.CRAFT_DEBUG_COMPACTION === '1' && (agentEvent.type === 'info' || agentEvent.type === 'status')) {
+        if (agentEvent.type === 'info' && (agentEvent as any).message?.startsWith('Compacted')) {
+          this.debug(`[compaction-debug] handleSubprocessEvent adapted event type=${agentEvent.type} message=${(agentEvent as any).message} tokensBefore=${(agentEvent as any).tokensBefore ?? 'na'}`)
+        } else if (agentEvent.type === 'status' && (agentEvent as any).message?.includes('Compacting')) {
+          this.debug(`[compaction-debug] handleSubprocessEvent adapted event type=${agentEvent.type} message=${(agentEvent as any).message}`)
+        }
+      }
       // Track Read tool calls for prerequisite checking
       if (agentEvent.type === 'tool_start' && agentEvent.toolName === 'Read') {
         this.prerequisiteManager.trackReadTool(agentEvent.input as Record<string, unknown>);
@@ -1280,13 +1342,54 @@ export class PiAgent extends BaseAgent {
         }
       }
 
+      // [compaction-debug] Log events being enqueued
+      if (process.env.CRAFT_DEBUG_COMPACTION === '1' && (agentEvent.type === 'info' || agentEvent.type === 'status')) {
+        this.debug(`[compaction-debug] eventQueue.enqueue type=${agentEvent.type}`)
+      }
+
       this.eventQueue.enqueue(agentEvent);
     }
 
-    // Check for agent end (turn complete)
-    if (eventType === 'agent_end') {
-      this.eventQueue.complete();
+    // After adapter loop: close event queue if compaction ended (events are already enqueued)
+    if (shouldCompleteAfterAdapt) {
+      if (process.env.CRAFT_DEBUG_COMPACTION === '1') {
+        this.debug(`[compaction-debug] eventQueue.complete (after compaction_end, events enqueued)`)
+      }
+      this.eventQueue.complete()
+
+      // Bypass: store compaction info from the raw compaction_end result so
+      // chatImpl can yield it after the drain loop exits. eventQueue microtask
+      // scheduling can swallow adapted events — this ensures SessionManager
+      // receives the compaction notification regardless.
+      const compactionResult = (event as Record<string, unknown>).result as Record<string, unknown> | undefined
+      const tokensBefore = typeof compactionResult?.tokensBefore === 'number' ? compactionResult.tokensBefore : undefined
+      this._pendingCompactionInfo = {
+        message: tokensBefore != null
+          ? `Compacted context to fit within limits (from ~${tokensBefore.toLocaleString()} tokens)`
+          : 'Compacted context to fit within limits',
+        tokensBefore,
+      }
+      if (process.env.CRAFT_DEBUG_COMPACTION === '1') {
+        this.debug(`[compaction-debug] bypass stored _pendingCompactionInfo message=${this._pendingCompactionInfo.message} tokensBefore=${this._pendingCompactionInfo.tokensBefore ?? 'na'}`)
+      }
     }
+
+    // If agent_end arrived without committed compaction, start a grace timer.
+    // The Pi SDK emits agent_end BEFORE auto-compaction events (compaction_start
+    // arrives within ~2ms). If compaction starts within this window, the timer
+    // is cleared by compaction_start handling. Otherwise we close the queue.
+    if (shouldStartAgentEndTimer) {
+      this._compactionGraceTimer = setTimeout(() => {
+        this._compactionGraceTimer = null
+        if (!this._compactionInProgress) {
+          if (process.env.CRAFT_DEBUG_COMPACTION === '1') {
+            this.debug(`[compaction-debug] eventQueue.complete (agent_end grace timeout, no compaction)`)
+          }
+          this.eventQueue.complete()
+        }
+      }, 50) // 50ms grace — compaction_start typically arrives within 2ms
+    }
+
   }
 
   /**
@@ -2131,6 +2234,12 @@ export class PiAgent extends BaseAgent {
     this._isProcessing = true;
     this.abortReason = undefined;
     this.eventQueue.reset();
+    this._pendingCompactionInfo = null;
+    this._compactionInProgress = false;
+    if (this._compactionGraceTimer) {
+      clearTimeout(this._compactionGraceTimer)
+      this._compactionGraceTimer = null
+    }
     this.currentUserMessage = message;
     this.adapter.startTurn();
 
@@ -2182,14 +2291,28 @@ export class PiAgent extends BaseAgent {
       const compactMatch = trimmedMessage.match(/^\/compact(?:\s+([\s\S]+))?$/i);
       if (compactMatch) {
         const customInstructions = compactMatch[1]?.trim() || undefined;
-        const compactResult = await this.requestCompact(customInstructions);
-        if (compactResult) {
-          yield {
-            type: 'info',
-            message: `Compacted context to fit within limits (from ~${compactResult.tokensBefore.toLocaleString()} tokens)`,
-          };
-        } else {
-          yield { type: 'info', message: 'Compacted context to fit within limits' };
+        try {
+          const compactResult = await this.requestCompact(customInstructions);
+          if (compactResult) {
+            yield {
+              type: 'info',
+              message: `Compacted context to fit within limits (from ~${compactResult.tokensBefore.toLocaleString()} tokens)`,
+              tokensBefore: compactResult.tokensBefore,
+            };
+          } else {
+            yield { type: 'info', message: 'Compacted context to fit within limits' };
+          }
+        } catch (compactError) {
+          const compactMsg = compactError instanceof Error ? compactError.message : String(compactError)
+          // Pi SDK throws 'Already compacted' when the last branch entry is a compaction.
+          // This is expected — the context is already as compact as it can be.
+          if (compactMsg === 'Already compacted') {
+            yield { type: 'info', message: 'Context is already compacted. No further compaction needed.' }
+          } else if (compactMsg === 'Nothing to compact (session too small)') {
+            yield { type: 'info', message: 'Session is too small to compact. Continue the conversation and try again later.' }
+          } else {
+            yield { type: 'info', message: `Compaction failed: ${compactMsg}` }
+          }
         }
         yield { type: 'complete' };
         return;
@@ -2273,10 +2396,19 @@ export class PiAgent extends BaseAgent {
       // Yield events as they arrive. After each tool_result, check whether
       // a session-scoped tool (source_test) activated a new source — if so,
       // yield source_activated and force-abort the turn for auto-retry.
+      // [compaction-debug] Log drain loop boundaries
+      if (process.env.CRAFT_DEBUG_COMPACTION === '1') {
+        this.debug(`[compaction-debug] chatImpl drain loop STARTING (eventQueue.done=${this.eventQueue.isComplete ? 1 : 0})`)
+      }
+
       // Mirrors the same check in ClaudeAgent.chatImpl; Pi's subprocess only
       // picks up new proxy tools on the next handlePrompt, so the restart
       // is needed here too.
       for await (const event of this.eventQueue.drain()) {
+        // [compaction-debug] Log events yielded by chatImpl
+        if (process.env.CRAFT_DEBUG_COMPACTION === '1' && (event.type === 'info' || event.type === 'status')) {
+          this.debug(`[compaction-debug] chatImpl yielding event type=${event.type} message=${(event as any).message ?? 'na'}`)
+        }
         yield event;
         if (event.type === 'tool_result') {
           const pendingRestart = this.consumePendingSourceActivationRestart();
@@ -2314,6 +2446,8 @@ export class PiAgent extends BaseAgent {
 
       yield { type: 'complete' };
     } finally {
+      // FINALLY BLOCK — always runs.
+      this.debug(`[compaction-debug] finally BLOCK EXECUTED pendingCompactionInfo=${this._pendingCompactionInfo ? 1 : 0} _compactionInProgress=${this._compactionInProgress ? 1 : 0}`)
       this._isProcessing = false;
     }
   }
@@ -2332,6 +2466,17 @@ export class PiAgent extends BaseAgent {
       this.pendingPermissions.delete(requestId);
       pending.resolve(allowed);
     }
+  }
+
+  /**
+   * Consume and return any pending compaction info stored from compaction_end.
+   * Called by SessionManager after the chat completes, since yielding directly
+   * from chatImpl's finally block has ordering issues with catch/yield complete.
+   */
+  consumePendingCompactionInfo(): { message: string; tokensBefore?: number } | null {
+    const info = this._pendingCompactionInfo
+    this._pendingCompactionInfo = null
+    return info
   }
 
   // ============================================================

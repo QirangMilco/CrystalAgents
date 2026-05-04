@@ -121,19 +121,23 @@ bun run scripts/build/stage-subprocess-servers.ts --platform linux --arch "$ARCH
 # 5. Copy SDK from root node_modules (monorepo hoisting)
 # Note: The SDK is hoisted to root node_modules by the package manager.
 # We copy it here because electron-builder only sees apps/electron/.
+#
+# Since SDK 0.2.113: thin core + per-platform binary package.
+# See apps/electron/scripts/build-dmg.sh for the full rationale.
 SDK_SOURCE="$ROOT_DIR/node_modules/@anthropic-ai/claude-agent-sdk"
-require_path "$SDK_SOURCE" "SDK" "Run 'bun install' from the repository root first."
-echo "Copying SDK..."
+require_path "$SDK_SOURCE" "SDK core" "Run 'bun install' from the repository root first."
+echo "Copying SDK core..."
 mkdir -p "$ELECTRON_DIR/node_modules/@anthropic-ai"
+rm -rf "$ELECTRON_DIR/node_modules/@anthropic-ai/claude-agent-sdk"
 cp -r "$SDK_SOURCE" "$ELECTRON_DIR/node_modules/@anthropic-ai/"
 
-# 6. Copy interceptor
+# 6. Copy network interceptor sources (for Pi subprocess; Claude no longer
+#    uses --preload — see Phase 2 in plans/sdk-uplift-plan.md).
 INTERCEPTOR_SOURCE="$ROOT_DIR/packages/shared/src/unified-network-interceptor.ts"
 require_path "$INTERCEPTOR_SOURCE" "Interceptor" "Ensure packages/shared/src/unified-network-interceptor.ts exists."
-echo "Copying interceptor..."
+echo "Copying interceptor (for Pi subprocess)..."
 mkdir -p "$ELECTRON_DIR/packages/shared/src"
 cp "$INTERCEPTOR_SOURCE" "$ELECTRON_DIR/packages/shared/src/"
-# Also copy dependencies imported by the interceptor at runtime
 for dep in interceptor-common.ts feature-flags.ts interceptor-request-utils.ts; do
   if [ -f "$ROOT_DIR/packages/shared/src/$dep" ]; then
     cp "$ROOT_DIR/packages/shared/src/$dep" "$ELECTRON_DIR/packages/shared/src/"
